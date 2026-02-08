@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Старт восстановления. Женское здоровье</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bento-gap: 1.25rem;
+            --bento-radius: 2.25rem;
+            --p-deep: #1e1b4b;
+            --p-main: #7c3aed;
+            --p-light: #f5f3ff;
+            --p-border: rgba(124, 58, 237, 0.08);
+            --bg-page: #fbfaff;
+        }
+        
+        body {
+            background-color: var(--bg-page);
+            color: #1a1a1a;
+            -webkit-font-smoothing: antialiased;
+            letter-spacing: -0.015em;
+            line-height: 1.6;
+        }
+
+        .font-serif { font-family: 'Playfair Display', serif; }
+        .font-sans { font-family: 'Inter', sans-serif; }
+        
+        .bento-card {
+            background: #ffffff;
+            border: 1px solid var(--p-border);
+            border-radius: var(--bento-radius);
+            padding: 2.5rem;
+            position: relative;
+            height: 100%;
+        }
+        
+        .bento-card:hover {
+            border-color: rgba(124, 58, 237, 0.2);
+            background: #ffffff;
+        }
+
+        .bento-card-accent {
+            background: #fcfaff;
+            border: 1px solid rgba(124, 58, 237, 0.03);
+        }
+
+        .bento-card-dark {
+            background: var(--p-deep);
+            color: #ffffff;
+            border: none;
+        }
+
+        .pill {
+            padding: 0.6rem 1.2rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            display: inline-flex;
+            align-items: center;
+            background: white;
+            border: 1px solid var(--p-border);
+        }
+
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg-page); }
+        ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 20px; }
+
+        html { scroll-behavior: smooth; }
+
+        ::selection { background: #ede9fe; color: #4c1d95; }
+
+        /* Removing all reveal and hover animations */
+        * {
+            transition: none !important;
+            animation: none !important;
+        }
+    </style>
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@19.0.0",
+        "react-dom": "https://esm.sh/react-dom@19.0.0",
+        "react-dom/client": "https://esm.sh/react-dom@19.0.0/client"
+      }
+    }
+    </script>
+</head>
+<body class="font-sans">
+    <div id="root">
+        <!-- Fallback content если React не загрузится -->
+        <div style="display: flex; justify-content: center; align-items: center; height: 100vh; font-family: Inter, sans-serif;">
+            <div style="text-align: center;">
+                <h1 style="font-size: 2rem; margin-bottom: 1rem; color: #1e1b4b;">Загрузка...</h1>
+                <p style="color: #666;">Если вы видите это сообщение долго, проверьте подключение к интернету или файл index.tsx</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Один правильный путь к модулю -->
+    <script type="module" src="./index.tsx"></script>
+</body>
+</html>
