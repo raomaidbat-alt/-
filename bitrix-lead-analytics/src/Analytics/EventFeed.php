@@ -60,7 +60,7 @@ final class EventFeed
                JOIN leads_current l ON l.bitrix_id = s.lead_id
               WHERE l.is_deleted = 0 AND l.date_create BETWEEN ? AND ?
               GROUP BY s.lead_id",
-            [$initialSort, $consultSort ?? PHP_INT_MAX, $fromUtc, $toUtc]
+            [$initialSort, $consultSort ?? 2147483647, $fromUtc, $toUtc] // стадии нет: INT_MAX, чтобы PostgreSQL не вышел за integer
         );
         foreach ($rows as $r) {
             $milestones[(int) $r['lead_id']] = $r;
