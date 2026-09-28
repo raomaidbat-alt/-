@@ -18,7 +18,7 @@ final class LeadRepository
         'bitrix_id', 'status_id', 'status_semantics', 'max_stage_sort', 'is_qualified',
         'stage_entered_at', 'opportunity', 'currency_id', 'source_id',
         'assigned_by_id', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term',
-        'date_create', 'date_modify', 'custom_fields_enc', 'row_hash', 'is_deleted',
+        'date_create', 'date_modify', 'custom_fields_enc', 'loss_reason', 'row_hash', 'is_deleted',
         'first_seen_at', 'last_synced_at', 'last_seen_run_id',
     ];
 
@@ -107,6 +107,7 @@ final class LeadRepository
                 'date_create' => $lead['date_create'],
                 'date_modify' => $lead['date_modify'],
                 'custom_fields_enc' => $lead['custom_fields_enc'],
+                'loss_reason' => $lead['loss_reason'] ?? null,
                 'row_hash' => $lead['row_hash'],
                 'is_deleted' => 0,
                 'first_seen_at' => $firstSeen,

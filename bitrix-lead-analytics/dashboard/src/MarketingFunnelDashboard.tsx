@@ -87,6 +87,14 @@ export interface LeadEvent {
   utmSource?: string | null;
   /** Сумма лида (сделки) в основной валюте */
   amount?: number;
+  /** Когда лид попал на текущую стадию (для поиска зависших) */
+  stageEnteredAt?: string | null;
+  /** Когда лид ушёл в брак/отказ */
+  lostAt?: string | null;
+  /** До какой стадии (код) лид дошёл перед отказом */
+  lostFrom?: string | null;
+  /** Причина отказа из поля CRM, если оно подключено */
+  lossReason?: string | null;
 }
 
 /** Стадия лида из CRM: название, цвет и смысл (P в работе, S успех, F брак/отказ). */
@@ -228,9 +236,16 @@ export function generateMockDashboardData(now: Date = new Date(), seed = 2026092
         const ageDays = (now.getTime() - created.getTime()) / DAY_MS;
         const lost = stage !== "paid" && ageDays > 10 && rnd() < 0.78;
         const amount = Math.round((ch.check[0] + rnd() * (ch.check[1] - ch.check[0])) / 1000) * 1000;
-        const status = lost
-          ? rnd() < 0.6 ? "JUNK" : "UC_REFUSED"
-          : { lead: "NEW", sql: "IN_PROCESS", consult: rnd() < 0.5 ? "UC_CONSULT" : "UC_OFFER", paid: "CONVERTED" }[stage];
+        const stageStatus = { lead: "NEW", sql: "IN_PROCESS", consult: rnd() < 0.5 ? "UC_CONSULT" : "UC_OFFER", paid: "CONVERTED" }[stage];
+        const status = lost ? (rnd() < 0.6 ? "JUNK" : "UC_REFUSED") : stageStatus;
+        const reasons: Record<FunnelStage, string[]> = {
+          lead: ["Не дозвонились", "Не целевой", "Не дозвонились", "Спам"],
+          sql: ["Не целевой", "Дорого", "Нет бюджета", "Не дозвонились"],
+          consult: ["Дорого", "Выбрали конкурента", "Пропал после КП", "Отложили решение"],
+          paid: [],
+        };
+        const lastMove = paidAt ?? consultAt ?? sqlAt ?? created;
+        const lostAtDate = lost ? new Date(Math.min(now.getTime(), lastMove.getTime() + (1 + rnd() * 6) * DAY_MS)) : null;
         events.push({
           id: String(id++),
           createdAt: toLocalIso(created),
@@ -244,6 +259,10 @@ export function generateMockDashboardData(now: Date = new Date(), seed = 2026092
           status,
           source: ch.sources[Math.floor(rnd() * ch.sources.length)],
           amount,
+          stageEnteredAt: toLocalIso(lostAtDate ?? lastMove),
+          lostAt: lostAtDate && toLocalIso(lostAtDate),
+          lostFrom: lost ? stageStatus : null,
+          lossReason: lost && rnd() < 0.85 ? reasons[stage][Math.floor(rnd() * reasons[stage].length)] ?? null : null,
         });
       }
     }
@@ -580,6 +599,92 @@ export function computeStageCounts(events: LeadEvent[], statuses: StatusDef[], f
   });
 }
 
+export interface LossBucket {
+  key: string;
+  label: string;
+  color: string | null;
+  count: number;
+  share: number;
+  amount: number;
+}
+
+export interface LossReport {
+  cohort: number;
+  lost: number;
+  lostShare: number;
+  lostAmount: number;
+  medianDaysToLoss: number | null;
+  byStage: LossBucket[];
+  byReason: LossBucket[];
+  reasonFromField: boolean;
+  byChannel: { id: ChannelId; leads: number; lost: number; rate: number }[];
+  stuck: (LeadEvent & { daysIdle: number })[];
+  stuckAmount: number;
+}
+
+/**
+ * Потери за окно: где отвалились (до какой стадии дошли), почему (поле причины или стадия отказа),
+ * по каким каналам, и скрытые потери: активные лиды без движения дольше stuckDays.
+ */
+export function computeLosses(
+  events: LeadEvent[], statuses: StatusDef[], from: number, to: number, nowMs: number, stuckDays = 7,
+): LossReport {
+  const cohort = events.filter((e) => inRange(e.createdAt, from, to));
+  const lost = cohort.filter((e) => e.lost);
+  const byId = new Map(statuses.map((st) => [st.id, st]));
+  const bucket = (m: Map<string, LossBucket>, key: string, label: string, color: string | null, amount: number) => {
+    const b = m.get(key) ?? { key, label, color, count: 0, share: 0, amount: 0 };
+    b.count++;
+    b.amount += amount;
+    m.set(key, b);
+  };
+
+  const stages = new Map<string, LossBucket>();
+  const reasons = new Map<string, LossBucket>();
+  let reasonFromField = false;
+  const days: number[] = [];
+  for (const e of lost) {
+    const fromSt = e.lostFrom ? byId.get(e.lostFrom) : undefined;
+    bucket(stages, e.lostFrom ?? "?", fromSt?.name ?? e.lostFrom ?? "Неизвестно", fromSt?.color ?? null, e.amount ?? 0);
+    if (e.lossReason) reasonFromField = true;
+    const reason = e.lossReason?.trim() || (e.status ? byId.get(e.status)?.name ?? e.status : "Без причины");
+    bucket(reasons, reason, reason, null, e.amount ?? 0);
+    if (e.lostAt) days.push((ts(e.lostAt) - ts(e.createdAt)) / DAY_MS);
+  }
+  const finish = (m: Map<string, LossBucket>, order?: (b: LossBucket) => number) =>
+    [...m.values()]
+      .map((b) => ({ ...b, share: lost.length ? b.count / lost.length : 0 }))
+      .sort(order ? (a, b) => order(a) - order(b) : (a, b) => b.count - a.count);
+
+  const chan = new Map<ChannelId, { id: ChannelId; leads: number; lost: number; rate: number }>();
+  for (const e of cohort) {
+    const c = chan.get(e.channel) ?? { id: e.channel, leads: 0, lost: 0, rate: 0 };
+    c.leads++;
+    if (e.lost) c.lost++;
+    chan.set(e.channel, c);
+  }
+
+  const stuck = cohort
+    .filter((e) => !e.lost && e.stage !== "paid" && e.stageEnteredAt)
+    .map((e) => ({ ...e, daysIdle: (nowMs - ts(e.stageEnteredAt as string)) / DAY_MS }))
+    .filter((e) => e.daysIdle >= stuckDays)
+    .sort((a, b) => b.daysIdle - a.daysIdle);
+
+  return {
+    cohort: cohort.length,
+    lost: lost.length,
+    lostShare: cohort.length ? lost.length / cohort.length : 0,
+    lostAmount: lost.reduce((a, e) => a + (e.amount ?? 0), 0),
+    medianDaysToLoss: median(days.filter((d) => d >= 0)),
+    byStage: finish(stages, (b) => byId.get(b.key)?.sort ?? 9999),
+    byReason: finish(reasons),
+    reasonFromField,
+    byChannel: [...chan.values()].map((c) => ({ ...c, rate: c.leads ? c.lost / c.leads : 0 })).sort((a, b) => b.rate - a.rate),
+    stuck,
+    stuckAmount: stuck.reduce((a, e) => a + (e.amount ?? 0), 0),
+  };
+}
+
 // ── 2.4 Хук данных: моки или API, автообновление ────────────────────────────────────
 
 interface DataState {
@@ -693,6 +798,9 @@ function channelStyle(id: string, def?: ChannelDef, index = 0): { icon: LucideIc
     color: def?.color || known?.color || PALETTE[index % PALETTE.length],
   };
 }
+
+/** Лид "завис", если столько дней не менял стадию. */
+const STUCK_DAYS = 7;
 
 const PERIODS: { key: PeriodKey; label: string }[] = [
   { key: "7d", label: "7 дней" },
@@ -1268,6 +1376,159 @@ function EmptyState({ text }: { text: string }) {
   return <div className="flex h-full items-center justify-center text-sm text-zinc-400">{text}</div>;
 }
 
+// ── Потери ─────────────────────────────────────────────────────────────────────────
+
+function LossBars({ title, hint, items, currency, colorFallback }: { title: string; hint?: string; items: LossBucket[]; currency: CurrencyCode; colorFallback: string }) {
+  const max = Math.max(1, ...items.map((i) => i.count));
+  return (
+    <div className="min-w-0">
+      <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{title}</p>
+      {hint && <p className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">{hint}</p>}
+      {items.length === 0 ? (
+        <p className="mt-3 text-sm text-zinc-400">Потерь нет</p>
+      ) : (
+        <ul className="mt-3 space-y-2.5">
+          {items.slice(0, 7).map((i) => (
+            <li key={i.key} title={i.amount ? `сумма ${fmtMoney(i.amount, currency)}` : undefined}>
+              <div className="flex items-baseline justify-between gap-3 text-sm">
+                <span className="min-w-0 truncate text-zinc-700 dark:text-zinc-200">{i.label}</span>
+                <span className="shrink-0 tabular-nums">
+                  <span className="font-semibold text-zinc-900 dark:text-white">{fmtInt(i.count)}</span>
+                  <span className="ml-1.5 text-xs text-zinc-400">{fmtPct(i.share, 0)}</span>
+                </span>
+              </div>
+              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+                <div className="h-full rounded-full" style={{ width: `${Math.max(3, (i.count / max) * 100)}%`, background: i.color ?? colorFallback }} />
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function LossStat({ label, value, sub, tone }: { label: string; value: string; sub?: ReactNode; tone: "red" | "amber" | "neutral" }) {
+  const color = tone === "red" ? "text-red-600 dark:text-red-400" : tone === "amber" ? "text-amber-600 dark:text-amber-400" : "text-zinc-900 dark:text-white";
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/50">
+      <p className="text-xs text-zinc-500 dark:text-zinc-400">{label}</p>
+      <p className={cx("mt-1 text-xl font-extrabold tabular-nums", color)} style={DISPLAY_FONT}>{value}</p>
+      {sub && <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{sub}</p>}
+    </div>
+  );
+}
+
+function LossesCard({
+  report, statuses, defs, currency, portalUrl, stuckDays,
+}: {
+  report: LossReport; statuses: StatusDef[]; defs: ChannelDef[]; currency: CurrencyCode; portalUrl?: string | null; stuckDays: number;
+}) {
+  const [showAllStuck, setShowAllStuck] = useState(false);
+  const statusById = useMemo(() => new Map(statuses.map((st) => [st.id, st])), [statuses]);
+  const labelOf = (id: ChannelId) => defs.find((d) => d.id === id)?.label ?? (id === "other" ? "Другие источники" : id);
+  const worstStage = report.byStage.reduce<LossBucket | null>((w, b) => (!w || b.count > w.count ? b : w), null);
+  const channelItems: LossBucket[] = report.byChannel
+    .filter((c) => c.lost > 0)
+    .map((c, i) => ({
+      key: c.id, label: `${labelOf(c.id)} · ${fmtInt(c.lost)} из ${fmtInt(c.leads)}`, color: channelStyle(c.id, defs.find((d) => d.id === c.id), i).color,
+      count: c.lost, share: c.rate, amount: 0,
+    }));
+
+  return (
+    <Card>
+      <CardHeader
+        icon={TrendingDown}
+        title="Потери: где и почему"
+        description="Лиды, пришедшие в период и ушедшие в брак или отказ, плюс те, что застряли без движения."
+        action={worstStage && report.lost > 0 ? <Badge tone="negative">больше всего теряем: {worstStage.label}</Badge> : undefined}
+      />
+      <CardContent className="space-y-6">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <LossStat label="Потеряно лидов" value={fmtInt(report.lost)} sub={`${fmtPct(report.lostShare)} от ${fmtInt(report.cohort)} за период`} tone="red" />
+          <LossStat label="Сумма потерянных лидов" value={fmtMoney(report.lostAmount, currency)} sub="по полю «Сумма» в лиде" tone="red" />
+          <LossStat
+            label="Медиана до отказа"
+            value={report.medianDaysToLoss === null ? "—" : fmtDays(report.medianDaysToLoss) ?? "—"}
+            sub="от заявки до брака/отказа"
+            tone="neutral"
+          />
+          <LossStat
+            label={`Зависли > ${stuckDays} дн`}
+            value={fmtInt(report.stuck.length)}
+            sub={report.stuckAmount ? `на ${fmtMoney(report.stuckAmount, currency)}, скрытые потери` : "скрытые потери"}
+            tone="amber"
+          />
+        </div>
+
+        <div className="grid gap-6 lg:grid-cols-3">
+          <LossBars title="Где отваливаются" hint="Последняя стадия, до которой лид дошёл" items={report.byStage} currency={currency} colorFallback={COLORS.red} />
+          <LossBars
+            title="Почему"
+            hint={report.reasonFromField ? "Из поля «Причина отказа»" : "По стадии отказа. Подключите поле причины в настройках, чтобы видеть точнее"}
+            items={report.byReason}
+            currency={currency}
+            colorFallback={COLORS.orange}
+          />
+          <LossBars title="Доля потерь по каналам" hint="Сколько лидов канала ушло в брак или отказ" items={channelItems} currency={currency} colorFallback={COLORS.red} />
+        </div>
+
+        {report.stuck.length > 0 && (
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Зависшие лиды</p>
+            <p className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">В работе, но на одной стадии дольше {stuckDays} дней. Их стоит поднять в первую очередь.</p>
+            <div className="mt-2 overflow-x-auto">
+              <table className="w-full min-w-[560px] text-sm">
+                <tbody>
+                  {(showAllStuck ? report.stuck : report.stuck.slice(0, 6)).map((e) => {
+                    const st = e.status ? statusById.get(e.status) : undefined;
+                    return (
+                      <tr key={e.id} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/70">
+                        <td className="py-2 pr-3 font-medium tabular-nums">
+                          {portalUrl ? (
+                            <a href={`${portalUrl}/crm/lead/details/${encodeURIComponent(e.id)}/`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-blue-600 hover:underline dark:text-[#ff9a4d]">
+                              #{e.id}
+                              <ExternalLink className="size-3" aria-hidden />
+                            </a>
+                          ) : (
+                            <span>#{e.id}</span>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3">
+                          <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-zinc-100 px-2 py-0.5 text-xs text-zinc-700 dark:bg-zinc-800 dark:text-zinc-100">
+                            <span className="size-2 rounded-full" style={{ background: st?.color ?? COLORS.blue }} aria-hidden />
+                            {st?.name ?? e.status}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-3 text-zinc-600 dark:text-zinc-300">{labelOf(e.channel)}</td>
+                        <td className="py-2 pr-3 text-right">
+                          <Badge tone={e.daysIdle >= stuckDays * 2 ? "negative" : "warning"}>
+                            {Math.floor(e.daysIdle)} {plural(Math.floor(e.daysIdle), "день", "дня", "дней")} без движения
+                          </Badge>
+                        </td>
+                        <td className="py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-100">{e.amount ? fmtMoney(e.amount, currency) : "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {report.stuck.length > 6 && (
+              <button
+                type="button"
+                onClick={() => setShowAllStuck((v) => !v)}
+                className="mt-2 text-xs font-medium text-blue-600 hover:underline dark:text-[#ff9a4d]"
+              >
+                {showAllStuck ? "Свернуть" : `Показать все ${fmtInt(report.stuck.length)}`}
+              </button>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Стадии CRM ─────────────────────────────────────────────────────────────────────
 
 const SEMANTIC_GROUPS: { key: string; label: string; tone: Tone }[] = [
@@ -1497,6 +1758,7 @@ export default function MarketingFunnelDashboard({
       series: computeSeries(events, range.from, range.to, range.bucket),
       sources: computeSourcesByChannel(data.rawEvents, range.from, range.to),
       stages: computeStageCounts(events, data.statuses ?? [], range.from, range.to),
+      losses: computeLosses(events, data.statuses ?? [], range.from, range.to, ts(data.meta.generatedAt), STUCK_DAYS),
       events,
     };
   }, [data, period, channel]);
@@ -1614,6 +1876,15 @@ export default function MarketingFunnelDashboard({
             </div>
 
             <FunnelSection steps={view.funnel} hasPrev={view.prev !== null} />
+
+            <LossesCard
+              report={view.losses}
+              statuses={data?.statuses ?? []}
+              defs={data?.channels ?? []}
+              currency={currency}
+              portalUrl={data?.meta.portalUrl}
+              stuckDays={STUCK_DAYS}
+            />
 
             <div className="grid gap-4 lg:grid-cols-5">
               <ChannelsTable rows={view.channels} currency={currency} selected={channel} defs={data?.channels ?? []} sources={view.sources} />

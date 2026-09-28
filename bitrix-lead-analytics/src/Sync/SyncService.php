@@ -63,6 +63,21 @@ final class SyncService
                 $this->log->warning('Personal data fields removed from sync.custom_fields', ['fields' => array_values($blocked)]);
             }
             $select = LeadMapper::select($customFields);
+
+            // Причина отказа: одно поле лида (обычно список "Причина отказа"). Хранится открытым текстом,
+            // поэтому годится только поле с вариантами ответа, без персональных данных.
+            $lossField = strtoupper(trim((string) ($this->cfg['sync']['loss_reason_field'] ?? '')));
+            $lossItems = [];
+            if ($lossField !== '') {
+                if (!preg_match('/^UF_CRM_[A-Z0-9_]+$/', $lossField)) {
+                    throw new \InvalidArgumentException('sync.loss_reason_field must be a UF_CRM_* code');
+                }
+                $select[] = $lossField;
+                $fields = $this->b24->call('crm.lead.fields')['result'] ?? [];
+                foreach ($fields[$lossField]['items'] ?? [] as $item) {
+                    $lossItems[(string) ($item['ID'] ?? '')] = (string) ($item['VALUE'] ?? '');
+                }
+            }
             $crypto = null;
             if ($customFields) {
                 $key = (string) ($this->cfg['security']['encryption_key'] ?? '');
@@ -99,7 +114,9 @@ final class SyncService
                         continue;
                     }
                     $seen[$id] = true;
-                    $leads[] = LeadMapper::map($raw, $customFields, $crypto);
+                    $lead = LeadMapper::map($raw, $customFields, $crypto);
+                    $lead['loss_reason'] = $lossField !== '' ? self::lossReason($raw[$lossField] ?? null, $lossItems) : null;
+                    $leads[] = $lead;
                 }
                 if ($dryRun) {
                     continue;
@@ -132,6 +149,19 @@ final class SyncService
             ] + $stats);
             throw $e;
         }
+    }
+
+    /** Значение поля причины: вариант списка превращается в текст, пустое в null. */
+    private static function lossReason(mixed $value, array $items): ?string
+    {
+        if (is_array($value)) {
+            $value = reset($value);
+        }
+        if ($value === null || $value === '' || $value === false) {
+            return null;
+        }
+        $text = $items[(string) $value] ?? (string) $value;
+        return mb_substr(trim($text), 0, 255) ?: null;
     }
 
     private function finish(int $runId, string $status, array $stats, ?string $error): void

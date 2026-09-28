@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS leads_current (
     date_create        DATETIME      NOT NULL,
     date_modify        DATETIME      NULL,
     custom_fields_enc  TEXT          NULL,                -- разрешённые UF_CRM_*, libsodium secretbox
+    loss_reason        VARCHAR(255)  NULL,                -- причина отказа из поля sync.loss_reason_field
     row_hash           CHAR(64)      NOT NULL,
     is_deleted         TINYINT       NOT NULL DEFAULT 0,
     first_seen_at      DATETIME      NOT NULL,

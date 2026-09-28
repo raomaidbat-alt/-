@@ -47,7 +47,8 @@ final class EventFeed
 
         $leads = $this->db->all(
             "SELECT l.bitrix_id, l.date_create, l.source_id, l.utm_source, l.status_id, l.status_semantics,
-                    l.max_stage_sort, l.is_qualified, l.opportunity, l.currency_id
+                    l.max_stage_sort, l.is_qualified, l.opportunity, l.currency_id,
+                    l.stage_entered_at, l.loss_reason
                FROM leads_current l
               WHERE l.is_deleted = 0 AND l.date_create BETWEEN ? AND ?
               ORDER BY l.date_create",
@@ -60,7 +61,8 @@ final class EventFeed
             "SELECT s.lead_id,
                     MIN(CASE WHEN s.status_semantics <> 'F' AND d.sort > ? THEN s.stage_entered_at END) AS sql_at,
                     MIN(CASE WHEN s.status_semantics <> 'F' AND d.sort >= ? THEN s.stage_entered_at END) AS consult_at,
-                    MIN(CASE WHEN s.status_semantics = 'S' THEN s.stage_entered_at END) AS paid_at
+                    MIN(CASE WHEN s.status_semantics = 'S' THEN s.stage_entered_at END) AS paid_at,
+                    MIN(CASE WHEN s.status_semantics = 'F' THEN s.stage_entered_at END) AS lost_at
                FROM leads_snapshots s
                JOIN statuses_directory d ON d.status_id = s.status_id
                JOIN leads_current l ON l.bitrix_id = s.lead_id
@@ -80,6 +82,18 @@ final class EventFeed
         }
         arsort($cur);
         $currency = $cur ? (string) array_key_first($cur) : 'RUB';
+
+        // Самая дальняя рабочая стадия по sort: "на каком этапе отвалился".
+        $progressStages = array_values(array_filter($statuses, static fn ($s) => $s['semantics'] !== 'F'));
+        $stageAtSort = static function (int $sort) use ($progressStages): ?string {
+            $best = null;
+            foreach ($progressStages as $s) {
+                if ((int) $s['sort'] <= $sort) {
+                    $best = $s['status_id'];
+                }
+            }
+            return $best ?? ($progressStages[0]['status_id'] ?? null);
+        };
 
         $iso = static fn (?string $utc) => $utc === null ? null
             : (new \DateTimeImmutable($utc, new \DateTimeZone('UTC')))->setTimezone($tz)->format('Y-m-d\TH:i:sP');
@@ -114,6 +128,10 @@ final class EventFeed
                 'source' => $l['source_id'] !== null ? ($sourceNames[$l['source_id']] ?? $l['source_id']) : null,
                 'utmSource' => $l['utm_source'],
                 'amount' => (float) $l['opportunity'],
+                'stageEnteredAt' => $iso($l['stage_entered_at']),
+                'lostAt' => $sem === 'F' ? $iso($m['lost_at'] ?? $l['stage_entered_at']) : null,
+                'lostFrom' => $sem === 'F' ? $stageAtSort($maxSort) : null,
+                'lossReason' => $sem === 'F' ? $l['loss_reason'] : null,
             ];
         }
 

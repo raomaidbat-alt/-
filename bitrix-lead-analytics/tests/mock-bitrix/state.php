@@ -103,5 +103,10 @@ function mock_fields(): array
             ['ID' => '101', 'VALUE' => 'до 100 тыс.'], ['ID' => '102', 'VALUE' => '100–500 тыс.'], ['ID' => '103', 'VALUE' => 'от 500 тыс.'],
         ]]),
         'UF_CRM_TAGS' => $f('string', 'UF_CRM_TAGS', ['formLabel' => 'Теги', 'isMultiple' => true]),
+        'UF_CRM_LOSS_REASON' => $f('enumeration', 'UF_CRM_LOSS_REASON', ['formLabel' => 'Причина отказа', 'items' => [
+            ['ID' => '201', 'VALUE' => 'Дорого'], ['ID' => '202', 'VALUE' => 'Не целевой'],
+            ['ID' => '203', 'VALUE' => 'Не дозвонились'], ['ID' => '204', 'VALUE' => 'Выбрали конкурента'],
+            ['ID' => '205', 'VALUE' => 'Пропал после КП'],
+        ]]),
     ];
 }

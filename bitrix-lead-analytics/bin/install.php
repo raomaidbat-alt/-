@@ -33,6 +33,23 @@ foreach ($statements as $sql) {
         throw $e;
     }
 }
+// Колонки, добавленные после первой версии: на уже работающей базе дописываем их сами.
+$addColumns = [
+    ['leads_current', 'loss_reason', 'VARCHAR(255) NULL'],
+];
+foreach ($addColumns as [$table, $column, $type]) {
+    $exists = $db->one(
+        $db->driver === 'mysql'
+            ? 'SELECT 1 AS x FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?'
+            : 'SELECT 1 AS x FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?',
+        [$table, $column]
+    );
+    if ($exists === null) {
+        $db->pdo->exec("ALTER TABLE {$table} ADD COLUMN {$column} {$type}");
+        echo "Column added: {$table}.{$column}\n";
+    }
+}
+
 echo "Schema applied ({$db->driver}): " . (count($statements) - $skipped) . " statements from {$file}\n";
 if ($skipped) {
     echo "Warning: {$skipped} trigger statements skipped (no SUPER privilege). "

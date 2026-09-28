@@ -83,6 +83,12 @@ $step = static function (array &$lead, int $fromTs, int $toTs) use ($sources, $s
     $moveAt = mt_rand($fromTs, $toTs);
     if ($r < 0.025 + (0.25 - $conv) * 0.08) {
         $lead['STATUS_ID'] = 'JUNK';
+        // Причина зависит от того, как далеко лид успел пройти.
+        $lead['UF_CRM_LOSS_REASON'] = match ($st) {
+            'NEW' => mt_rand(0, 1) ? '203' : '202',
+            'IN_PROCESS' => ['202', '201', '203'][mt_rand(0, 2)],
+            default => ['201', '204', '205'][mt_rand(0, 2)],
+        };
     } elseif ($r < 0.025 + 0.06 + $conv * 0.2) {
         $i = array_search($st, $stageOrder, true);
         $lead['STATUS_ID'] = $stageOrder[min($i + 1, count($stageOrder) - 1)];
