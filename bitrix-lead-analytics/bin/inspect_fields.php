@@ -31,12 +31,9 @@ const STANDARD_MAP = [
     'DATE_CREATE' => 'date_create',
     'DATE_MODIFY' => 'date_modify',
     'SOURCE_ID' => 'source_id',
-    'ASSIGNED_BY_ID' => 'assigned_by_id',
     'UTM_SOURCE' => 'utm_source',
     'UTM_MEDIUM' => 'utm_medium',
     'UTM_CAMPAIGN' => 'utm_campaign',
-    'UTM_CONTENT' => 'utm_content',
-    'UTM_TERM' => 'utm_term',
     'MOVED_TIME' => '(stage_entered_at)',
 ];
 

@@ -17,7 +17,7 @@ final class LeadRepository
     private const CURRENT_COLUMNS = [
         'bitrix_id', 'status_id', 'status_semantics', 'max_stage_sort', 'is_qualified',
         'stage_entered_at', 'opportunity', 'currency_id', 'source_id',
-        'assigned_by_id', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term',
+        'utm_source', 'utm_medium', 'utm_campaign',
         'date_create', 'date_modify', 'custom_fields_enc', 'loss_reason', 'row_hash', 'is_deleted',
         'first_seen_at', 'last_synced_at', 'last_seen_run_id',
     ];
@@ -98,12 +98,9 @@ final class LeadRepository
                 'opportunity' => $lead['opportunity'],
                 'currency_id' => $lead['currency_id'],
                 'source_id' => $lead['source_id'],
-                'assigned_by_id' => $lead['assigned_by_id'],
                 'utm_source' => $lead['utm_source'],
                 'utm_medium' => $lead['utm_medium'],
                 'utm_campaign' => $lead['utm_campaign'],
-                'utm_content' => $lead['utm_content'],
-                'utm_term' => $lead['utm_term'],
                 'date_create' => $lead['date_create'],
                 'date_modify' => $lead['date_modify'],
                 'custom_fields_enc' => $lead['custom_fields_enc'],
@@ -129,7 +126,6 @@ final class LeadRepository
                     'seconds_in_prev_stage' => $secondsInPrev,
                     'opportunity' => $lead['opportunity'],
                     'currency_id' => $lead['currency_id'],
-                    'assigned_by_id' => $lead['assigned_by_id'],
                     'source_id' => $lead['source_id'],
                     'is_deleted' => 0,
                     'row_hash' => $lead['row_hash'],
@@ -157,7 +153,7 @@ final class LeadRepository
             // более старые просто не выгружались, это не удаление.
             $gone = $this->db->all(
                 'SELECT bitrix_id, status_id, status_semantics, stage_entered_at, opportunity, currency_id,
-                        assigned_by_id, source_id, row_hash
+                        source_id, row_hash
                    FROM leads_current
                   WHERE is_deleted = 0 AND (last_seen_run_id IS NULL OR last_seen_run_id <> ?)
                     AND date_create >= ?',
@@ -180,7 +176,6 @@ final class LeadRepository
                     'seconds_in_prev_stage' => null,
                     'opportunity' => $g['opportunity'],
                     'currency_id' => $g['currency_id'],
-                    'assigned_by_id' => $g['assigned_by_id'],
                     'source_id' => $g['source_id'],
                     'is_deleted' => 1,
                     'row_hash' => $g['row_hash'],

@@ -37,6 +37,26 @@ foreach ($statements as $sql) {
 $addColumns = [
     ['leads_current', 'loss_reason', 'VARCHAR(255) NULL'],
 ];
+// Колонки, которые больше не храним (ID сотрудников, UTM content/term): удаляем вместе с данными.
+$dropColumns = [
+    ['leads_current', 'assigned_by_id'],
+    ['leads_current', 'utm_content'],
+    ['leads_current', 'utm_term'],
+    ['leads_snapshots', 'assigned_by_id'],
+];
+foreach ($dropColumns as [$table, $column]) {
+    $exists = $db->one(
+        $db->driver === 'mysql'
+            ? 'SELECT 1 AS x FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?'
+            : 'SELECT 1 AS x FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?',
+        [$table, $column]
+    );
+    if ($exists !== null) {
+        $db->pdo->exec("ALTER TABLE {$table} DROP COLUMN {$column}");
+        echo "Column dropped: {$table}.{$column}\n";
+    }
+}
+
 foreach ($addColumns as [$table, $column, $type]) {
     $exists = $db->one(
         $db->driver === 'mysql'

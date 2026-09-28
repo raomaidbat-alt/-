@@ -50,12 +50,9 @@ CREATE TABLE IF NOT EXISTS leads_current (
     opportunity        DECIMAL(18,2) NOT NULL DEFAULT 0,
     currency_id        VARCHAR(8)    NULL,
     source_id          VARCHAR(50)   NULL,
-    assigned_by_id     BIGINT        NULL,
     utm_source         VARCHAR(255)  NULL,
     utm_medium         VARCHAR(255)  NULL,
     utm_campaign       VARCHAR(255)  NULL,
-    utm_content        VARCHAR(255)  NULL,
-    utm_term           VARCHAR(255)  NULL,
     date_create        DATETIME      NOT NULL,
     date_modify        DATETIME      NULL,
     custom_fields_enc  TEXT          NULL,                -- разрешённые UF_CRM_*, libsodium secretbox
@@ -89,7 +86,6 @@ CREATE TABLE IF NOT EXISTS leads_snapshots (
     seconds_in_prev_stage INT           NULL,             -- сколько лид провёл на prev_status_id
     opportunity           DECIMAL(18,2) NOT NULL DEFAULT 0,
     currency_id           VARCHAR(8)    NULL,
-    assigned_by_id        BIGINT        NULL,
     source_id             VARCHAR(50)   NULL,
     is_deleted            TINYINT       NOT NULL DEFAULT 0,
     row_hash              CHAR(64)      NOT NULL,

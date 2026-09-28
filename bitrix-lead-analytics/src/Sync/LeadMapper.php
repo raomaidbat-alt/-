@@ -9,7 +9,8 @@ namespace App\Sync;
  *
  * Персональные данные лида не запрашиваются вовсе: ни имя, ни фамилия, ни название лида
  * (там часто стоит имя клиента), ни телефоны, e-mail, мессенджеры, адрес, компания,
- * ни свободный текст "Дополнительно об источнике". Пользовательские поля UF_CRM_*
+ * ни свободный текст "Дополнительно об источнике", ни ID сотрудников (ответственный, автор),
+ * ни UTM content/term, куда иногда подставляют данные клиента. Пользовательские поля UF_CRM_*
  * выгружаются только из явного списка в config.php и хранятся зашифрованными.
  */
 final class LeadMapper
@@ -18,8 +19,8 @@ final class LeadMapper
     public const SELECT = [
         'ID', 'STATUS_ID', 'OPPORTUNITY', 'CURRENCY_ID',
         'DATE_CREATE', 'DATE_MODIFY', 'MOVED_TIME',
-        'SOURCE_ID', 'ASSIGNED_BY_ID',
-        'UTM_SOURCE', 'UTM_MEDIUM', 'UTM_CAMPAIGN', 'UTM_CONTENT', 'UTM_TERM',
+        'SOURCE_ID',
+        'UTM_SOURCE', 'UTM_MEDIUM', 'UTM_CAMPAIGN',
     ];
 
     /**
@@ -30,6 +31,7 @@ final class LeadMapper
         'TITLE', 'NAME', 'SECOND_NAME', 'LAST_NAME', 'HONORIFIC', 'BIRTHDATE', 'POST',
         'PHONE', 'EMAIL', 'WEB', 'IM', 'LINK', 'ADDRESS', 'COMPANY_TITLE', 'COMMENTS',
         'SOURCE_DESCRIPTION', 'STATUS_DESCRIPTION', 'CONTACT_ID', 'CONTACT_IDS', 'COMPANY_ID',
+        'ASSIGNED_BY_ID', 'CREATED_BY_ID', 'MODIFY_BY_ID', 'UTM_CONTENT', 'UTM_TERM',
     ];
 
     /**
@@ -52,8 +54,8 @@ final class LeadMapper
 
     /** Поля, изменение которых порождает новый снапшот. */
     private const HASHED = [
-        'status_id', 'opportunity', 'currency_id', 'assigned_by_id', 'source_id',
-        'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term',
+        'status_id', 'opportunity', 'currency_id', 'source_id',
+        'utm_source', 'utm_medium', 'utm_campaign',
     ];
 
     /**
@@ -84,12 +86,9 @@ final class LeadMapper
             'opportunity' => number_format((float) ($raw['OPPORTUNITY'] ?? 0), 2, '.', ''),
             'currency_id' => self::str($raw['CURRENCY_ID'] ?? null, 8),
             'source_id' => self::str($raw['SOURCE_ID'] ?? null, 50),
-            'assigned_by_id' => isset($raw['ASSIGNED_BY_ID']) && $raw['ASSIGNED_BY_ID'] !== '' ? (int) $raw['ASSIGNED_BY_ID'] : null,
             'utm_source' => self::str($raw['UTM_SOURCE'] ?? null, 255),
             'utm_medium' => self::str($raw['UTM_MEDIUM'] ?? null, 255),
             'utm_campaign' => self::str($raw['UTM_CAMPAIGN'] ?? null, 255),
-            'utm_content' => self::str($raw['UTM_CONTENT'] ?? null, 255),
-            'utm_term' => self::str($raw['UTM_TERM'] ?? null, 255),
             'date_create' => self::utc($raw['DATE_CREATE'] ?? null) ?? gmdate('Y-m-d H:i:s'),
             'date_modify' => self::utc($raw['DATE_MODIFY'] ?? null),
             'custom_fields_enc' => $customEnc,
