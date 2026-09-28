@@ -1,0 +1,26 @@
+# Apache (reg.ru, Beget, Timeweb и др.): корень сайта должен смотреть в эту папку.
+Options -Indexes
+DirectoryIndex index.html
+
+# Всегда HTTPS: API не отдаёт данные по обычному HTTP.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{HTTPS} !=on
+    RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
+    # Токен в заголовке Authorization доходит до PHP (нужно для части хостингов с CGI/FPM).
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+</IfModule>
+
+# Скрытые файлы наружу не отдаём.
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set Referrer-Policy "no-referrer"
+</IfModule>

@@ -580,6 +580,13 @@ final class Analytics
         $days = [];
         // Заполняем пропуски нулями, чтобы на графике не было "дыр".
         $start = (new \DateTimeImmutable($f['from'], new \DateTimeZone('UTC')))->setTimezone($f['tz'])->setTime(0, 0);
+        // Для "всего времени" начинаем с первого дня, в котором есть лиды, а не с 2000 года.
+        if ($rows) {
+            $firstDay = new \DateTimeImmutable(substr((string) $rows[0]['d'], 0, 10), $f['tz']);
+            if ($firstDay > $start) {
+                $start = $firstDay;
+            }
+        }
         $end = (new \DateTimeImmutable($f['to'], new \DateTimeZone('UTC')))->setTimezone($f['tz'])->setTime(0, 0);
         for ($d = $start; $d <= $end && count($days) < 400; $d = $d->modify('+1 day')) {
             $k = $d->format('Y-m-d');

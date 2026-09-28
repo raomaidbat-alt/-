@@ -1,0 +1,21 @@
+{$DOMAIN} {
+	root * /app/public
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# Наружу отдаём только index.html, assets/ и два эндпоинта API.
+	@php path *.php
+	handle @php {
+		@denied not path /api/analytics.php /api/events.php
+		respond @denied 404
+		php_fastcgi app:9000
+	}
+	file_server
+}

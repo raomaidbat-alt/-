@@ -1,3 +1,5 @@
 config.php
+config.local.php
+.env
 var/*
 !var/.gitkeep

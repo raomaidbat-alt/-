@@ -41,6 +41,13 @@ public/index.html  ← собранный dashboard/src/MarketingFunnelDashboard
 | `public/index.html`, `public/assets/` | собранный дашборд, готов к выкладке без Node |
 | `tests/mock-bitrix/` | мок-портал Bitrix24 для локальной проверки |
 
+## Где разместить
+
+| Вариант | Когда подходит | Инструкция |
+|---|---|---|
+| Хостинг reg.ru (или Beget, Timeweb) | есть тариф хостинга с PHP и MySQL, не хочется администрировать сервер | [`deploy/REGRU.md`](deploy/REGRU.md) |
+| Свой сервер с Docker | уже есть VPS | `sh deploy/init.sh`, затем `docker compose up -d` (PostgreSQL, PHP-FPM, планировщик и Caddy с автоматическим HTTPS) |
+
 ## Установка
 
 ```bash

@@ -1,0 +1,7 @@
+.git
+dashboard/node_modules
+var/*
+tests
+.env
+config.php
+config.local.php

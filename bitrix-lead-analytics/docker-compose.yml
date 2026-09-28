@@ -1,0 +1,70 @@
+# Дашборд + API + синхронизация Bitrix24 одной командой: docker compose up -d
+# Перед первым запуском: sh deploy/init.sh (создаст .env и config.local.php).
+name: b24-analytics
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: b24
+      POSTGRES_USER: b24
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U b24 -d b24"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment: &appenv
+      DB_DSN: pgsql:host=db;port=5432;dbname=b24
+      DB_USER: b24
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes: &appvolumes
+      - ./config.local.php:/app/config.local.php:ro
+      - appvar:/app/var
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Синхронизация: сразу при старте, дальше каждые 2 часа, раз в неделю полная сверка.
+  scheduler:
+    build: .
+    restart: unless-stopped
+    command: ["sh", "/app/deploy/scheduler.sh"]
+    env_file: .env
+    environment: *appenv
+    volumes: *appvolumes
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # HTTPS: сертификат Let's Encrypt для DOMAIN выпускается и продлевается сам.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./public:/app/public:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  pgdata:
+  appvar:
+  caddy_data:
+  caddy_config:
