@@ -41,7 +41,7 @@ $from = $days === null
 $utc = new DateTimeZone('UTC');
 try {
     $db = Db::fromConfig($cfg['db']);
-    $channels = new ChannelMap($cfg['channels'] ?? []);
+    $channels = ChannelMap::fromConfig($cfg['channels'] ?? [], $db);
     $feed = (new EventFeed($db, $channels, $cfg['funnel'] ?? []))->build(
         $from->setTimezone($utc)->format('Y-m-d H:i:s'),
         $now->setTimezone($utc)->format('Y-m-d H:i:s'),

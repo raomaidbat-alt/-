@@ -107,6 +107,7 @@ $filter = [
 
 try {
     $db = Db::fromConfig($cfg['db']);
+    $channels = ChannelMap::fromConfig($cfg['channels'] ?? [], $db);
     $an = new Analytics($db, $channels, $cfg['funnel'] ?? []);
     $t0 = microtime(true);
     $data = $an->build($filter);

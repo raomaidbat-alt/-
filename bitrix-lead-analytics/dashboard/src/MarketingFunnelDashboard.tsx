@@ -31,11 +31,14 @@ import {
   ArrowUp,
   ArrowUpDown,
   Banknote,
+  Bot,
+  Briefcase,
   Clapperboard,
   Filter,
   Handshake,
   Layers,
   Mail,
+  Megaphone,
   Minus,
   Moon,
   RefreshCw,
@@ -78,6 +81,10 @@ export interface LeadEvent {
 export interface ChannelDef {
   id: ChannelId;
   label: string;
+  /** Имя иконки: send, mail, bot, users, briefcase, megaphone, handshake, clapperboard, target, layers */
+  icon?: string;
+  /** Цвет канала, #rrggbb */
+  color?: string;
 }
 
 /** Охват и расходы канала за день: приходят из рекламных кабинетов или конфига. */
@@ -555,7 +562,21 @@ const CHANNEL_STYLE: Record<string, { icon: LucideIcon; color: string }> = {
   partners: { icon: Handshake, color: "#14b8a6" },
   other: { icon: Layers, color: "#a1a1aa" },
 };
-const channelStyle = (id: string) => CHANNEL_STYLE[id] ?? CHANNEL_STYLE.other;
+const ICONS: Record<string, LucideIcon> = {
+  send: Send, mail: Mail, bot: Bot, users: Users, briefcase: Briefcase, megaphone: Megaphone,
+  handshake: Handshake, clapperboard: Clapperboard, target: Target, layers: Layers,
+};
+const PALETTE = ["#6366f1", "#3b82f6", "#8b5cf6", "#14b8a6", "#f59e0b", "#ec4899", "#0ea5e9", "#84cc16"];
+
+/** Иконка и цвет канала: из данных (icon/color), затем по известному id, затем по порядку из палитры. */
+function channelStyle(id: string, def?: ChannelDef, index = 0): { icon: LucideIcon; color: string } {
+  const known = CHANNEL_STYLE[id];
+  if (id === "other") return CHANNEL_STYLE.other;
+  return {
+    icon: (def?.icon && ICONS[def.icon]) || known?.icon || Megaphone,
+    color: def?.color || known?.color || PALETTE[index % PALETTE.length],
+  };
+}
 
 const PERIODS: { key: PeriodKey; label: string }[] = [
   { key: "7d", label: "7 дней" },
@@ -892,7 +913,7 @@ function FunnelSection({ steps, hasPrev }: { steps: FunnelStep[]; hasPrev: boole
 
 type SortKey = "label" | "leads" | "c1" | "revenue" | "romi";
 
-function ChannelsTable({ rows, currency, selected }: { rows: ChannelRow[]; currency: CurrencyCode; selected: ChannelId | "all" }) {
+function ChannelsTable({ rows, currency, selected, defs }: { rows: ChannelRow[]; currency: CurrencyCode; selected: ChannelId | "all"; defs: ChannelDef[] }) {
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "leads", dir: -1 });
   const sorted = useMemo(() => {
     const val = (r: ChannelRow): number | string => (sort.key === "label" ? r.label : r[sort.key] ?? -Infinity);
@@ -941,7 +962,8 @@ function ChannelsTable({ rows, currency, selected }: { rows: ChannelRow[]; curre
           </thead>
           <tbody>
             {sorted.map((r) => {
-              const st = channelStyle(r.id);
+              const defIndex = defs.findIndex((d) => d.id === r.id);
+              const st = channelStyle(r.id, defs[defIndex], Math.max(0, defIndex));
               const Icon = st.icon;
               return (
                 <tr
@@ -1288,7 +1310,7 @@ export default function MarketingFunnelDashboard({
             <FunnelSection steps={view.funnel} hasPrev={view.prev !== null} />
 
             <div className="grid gap-4 lg:grid-cols-5">
-              <ChannelsTable rows={view.channels} currency={currency} selected={channel} />
+              <ChannelsTable rows={view.channels} currency={currency} selected={channel} defs={data?.channels ?? []} />
               <TrendChart series={view.series} currency={currency} bucket={view.range.bucket} dark={dark} />
             </div>
 

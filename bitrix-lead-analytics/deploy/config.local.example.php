@@ -5,32 +5,46 @@
  * ID источников и стадий: docker compose exec app php bin/inspect_fields.php
  */
 return [
+    /*
+     * Каналы = группы источников лидов. source_names: названия источников точно как в Bitrix24
+     * (регистр не важен), можно несколько на один канал. sources: то же по ID, если удобнее.
+     * spend_per_month / reach_per_month: расходы и охват в месяц для ROMI и шага "Охват" (0 = не считать).
+     * icon: send, mail, bot, users, briefcase, megaphone, handshake, clapperboard, target, layers.
+     */
     'channels' => [
-        'reels' => [
-            'label' => 'Reels / Органика',
-            'sources' => ['WEB'],
-            'utm_sources' => ['instagram', 'reels'],
+        'profi' => [
+            'label' => 'Профи',
+            'source_names' => ['Профи'],
+            'icon' => 'briefcase',
             'spend_per_month' => 0,
             'reach_per_month' => 0,
         ],
-        'telegram' => [
-            'label' => 'Telegram-канал',
-            'sources' => ['64'],                // "Заявки из чатов (ТГ Бот)"
-            'utm_sources' => ['telegram', 'tg'],
+        'email_marketer' => [
+            'label' => 'E-mail рассылка от маркетолога',
+            'source_names' => ['E-mail рассылка от маркетолога'],
+            'icon' => 'mail',
             'spend_per_month' => 0,
             'reach_per_month' => 0,
         ],
-        'base' => [
-            'label' => 'База / Рассылки',
-            'sources' => ['EMAIL'],
-            'utm_sources' => ['email', 'sendpulse', 'unisender'],
+        'coldy' => [
+            'label' => 'Рассылка Coldy',
+            'source_names' => ['Рассылка Coldy'],
+            'icon' => 'megaphone',
             'spend_per_month' => 0,
             'reach_per_month' => 0,
         ],
-        'partners' => [
-            'label' => 'Партнеры / Инвайтинг',
-            'sources' => ['PARTNER', 'RECOMMENDATION'],
-            'utm_sources' => ['partner'],
+        'lead_harvester' => [
+            'label' => 'Lead Harvester',
+            'source_names' => ['Lead Harvester'],
+            'icon' => 'target',
+            'spend_per_month' => 0,
+            'reach_per_month' => 0,
+        ],
+        'tg_bot' => [
+            'label' => 'Заявки из чатов (ТГ Бот)',
+            'source_names' => ['Заявки из чатов (ТГ Бот)'],
+            'sources' => ['64'],
+            'icon' => 'bot',
             'spend_per_month' => 0,
             'reach_per_month' => 0,
         ],

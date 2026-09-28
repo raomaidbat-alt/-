@@ -20,8 +20,35 @@ final class ChannelMap
     private array $byUtm = [];
 
     /**
-     * @param array<string, array{label?:string, sources?:list<string>, utm_sources?:list<string>,
-     *        spend_per_month?:float|int, reach_per_month?:int}> $channels
+     * Каналы из конфига с привязкой источников по названию: source_names (как в Bitrix24)
+     * превращаются в SOURCE_ID по справочнику sources_directory. Регистр и пробелы не важны.
+     */
+    public static function fromConfig(array $channels, Db $db): self
+    {
+        $byName = [];
+        foreach ($db->all('SELECT source_id, name FROM sources_directory') as $r) {
+            $byName[self::norm((string) $r['name'])][] = (string) $r['source_id'];
+        }
+        foreach ($channels as &$ch) {
+            foreach ($ch['source_names'] ?? [] as $name) {
+                foreach ($byName[self::norm((string) $name)] ?? [] as $id) {
+                    $ch['sources'][] = $id;
+                }
+            }
+        }
+        unset($ch);
+        return new self($channels);
+    }
+
+    private static function norm(string $s): string
+    {
+        return mb_strtolower(preg_replace('/\s+/u', ' ', trim($s)) ?? '');
+    }
+
+    /**
+     * @param array<string, array{label?:string, sources?:list<string>, source_names?:list<string>,
+     *        utm_sources?:list<string>, spend_per_month?:float|int, reach_per_month?:int,
+     *        icon?:string, color?:string}> $channels
      */
     public function __construct(private readonly array $channels)
     {
@@ -56,7 +83,12 @@ final class ChannelMap
     {
         $out = [];
         foreach ($this->channels as $key => $ch) {
-            $out[] = ['id' => $key, 'name' => $ch['label'] ?? $key];
+            $out[] = array_filter([
+                'id' => $key,
+                'name' => $ch['label'] ?? $key,
+                'icon' => $ch['icon'] ?? null,
+                'color' => isset($ch['color']) && preg_match('/^#[0-9a-fA-F]{6}$/', (string) $ch['color']) ? $ch['color'] : null,
+            ], static fn ($v) => $v !== null);
         }
         return $out;
     }

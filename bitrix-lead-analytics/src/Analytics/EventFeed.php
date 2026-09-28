@@ -133,7 +133,10 @@ final class EventFeed
 
         return [
             'currency' => $currency,
-            'channels' => array_map(static fn ($c) => ['id' => $c['id'], 'label' => $c['name']], $channels),
+            'channels' => array_map(
+                static fn ($c) => ['id' => $c['id'], 'label' => $c['name']] + array_intersect_key($c, ['icon' => 1, 'color' => 1]),
+                $channels
+            ),
             'rawEvents' => $events,
             'channelDaily' => $channelDaily,
         ];
