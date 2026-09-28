@@ -22,7 +22,8 @@ function readToken(): string {
 
 function App() {
   const params = new URLSearchParams(window.location.search);
-  const [demo, setDemo] = useState(params.get("demo") === "1");
+  // VITE_DEMO=1 собирает демо-версию без API (например, для публикации ссылкой).
+  const [demo, setDemo] = useState(import.meta.env.VITE_DEMO === "1" || params.get("demo") === "1");
   const [token, setToken] = useState(readToken);
   const [authError, setAuthError] = useState(false);
 
