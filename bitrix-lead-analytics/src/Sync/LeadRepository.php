@@ -149,15 +149,18 @@ final class LeadRepository
      * После полной выгрузки: лиды, которых не было в ответе, помечаются удалёнными,
      * а в журнал уходит снапшот change_type = 'deleted'.
      */
-    public function markMissingAsDeleted(int $runId, string $nowUtc): int
+    public function markMissingAsDeleted(int $runId, string $nowUtc, ?string $createdFrom = null): int
     {
-        return $this->db->transaction(function () use ($runId, $nowUtc): int {
+        return $this->db->transaction(function () use ($runId, $nowUtc, $createdFrom): int {
+            // При ограниченной глубине истории сверяем только лиды из этого окна:
+            // более старые просто не выгружались, это не удаление.
             $gone = $this->db->all(
                 'SELECT bitrix_id, status_id, status_semantics, stage_entered_at, opportunity, currency_id,
                         assigned_by_id, source_id, row_hash
                    FROM leads_current
-                  WHERE is_deleted = 0 AND (last_seen_run_id IS NULL OR last_seen_run_id <> ?)',
-                [$runId]
+                  WHERE is_deleted = 0 AND (last_seen_run_id IS NULL OR last_seen_run_id <> ?)
+                    AND date_create >= ?',
+                [$runId, $createdFrom ?? '1970-01-01 00:00:00']
             );
             if (!$gone) {
                 return 0;

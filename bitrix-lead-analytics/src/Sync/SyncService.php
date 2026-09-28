@@ -80,6 +80,13 @@ final class SyncService
                 // Bitrix24 понимает ISO 8601 с поясом в фильтрах по датам.
                 $params['filter']['>=DATE_MODIFY'] = gmdate('Y-m-d\TH:i:s+00:00', strtotime($watermark . ' UTC'));
             }
+            // Глубина истории: берём только лиды, созданные за последние N дней (0 = все).
+            $createdFrom = null;
+            $historyDays = (int) ($this->cfg['sync']['history_days'] ?? 0);
+            if ($historyDays > 0) {
+                $createdFrom = gmdate('Y-m-d H:i:s', strtotime($now . ' UTC') - $historyDays * 86400);
+                $params['filter']['>=DATE_CREATE'] = gmdate('Y-m-d\TH:i:s+00:00', strtotime($createdFrom . ' UTC'));
+            }
 
             $seen = [];
             foreach ($this->b24->listAll('crm.lead.list', $params) as $page) {
@@ -104,7 +111,7 @@ final class SyncService
             }
 
             if ($mode === 'full' && !$dryRun) {
-                $stats['deleted'] = $repo->markMissingAsDeleted($runId, $now);
+                $stats['deleted'] = $repo->markMissingAsDeleted($runId, $now, $createdFrom);
             }
             $this->db->pdo->commit();
 

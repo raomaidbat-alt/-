@@ -78,6 +78,11 @@ function mock_dispatch(string $method, array $p, array $state): array
                 $ts = strtotime((string) $since);
                 $leads = array_values(array_filter($leads, static fn ($l) => strtotime($l['DATE_MODIFY']) >= $ts));
             }
+            $createdFrom = $p['filter']['>=DATE_CREATE'] ?? null;
+            if ($createdFrom !== null) {
+                $cts = strtotime((string) $createdFrom);
+                $leads = array_values(array_filter($leads, static fn ($l) => strtotime($l['DATE_CREATE']) >= $cts));
+            }
             usort($leads, static fn ($a, $b) => (int) $a['ID'] <=> (int) $b['ID']);
             $start = (int) ($p['start'] ?? 0);
             $page = array_slice($leads, $start, 50);
