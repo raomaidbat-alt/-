@@ -58,6 +58,8 @@ try {
             'lastSyncStatus' => $sync['last_run']['status'] ?? null,
             'currency' => $feed['currency'],
             'timezone' => $tz->getName(),
+            // Как часто идёт синхронизация: дашборд по нему решает, "Live" данные или устарели.
+            'syncIntervalMinutes' => max(1, (int) round(((int) (getenv('SYNC_INTERVAL_SECONDS') ?: 900)) / 60)),
             // Для ссылок "открыть лид в Bitrix24": только адрес портала, без токена вебхука.
             'portalUrl' => ($host = parse_url((string) ($cfg['bitrix']['webhook_url'] ?? ''), PHP_URL_HOST)) ? 'https://' . $host : null,
         ],

@@ -135,6 +135,8 @@ export interface DashboardData {
     timezone?: string;
     /** Адрес портала CRM для ссылок на карточку лида */
     portalUrl?: string | null;
+    /** Интервал синхронизации с CRM, минут */
+    syncIntervalMinutes?: number;
   };
   channels: ChannelDef[];
   rawEvents: LeadEvent[];
@@ -975,7 +977,8 @@ function DataStatus({ meta, nowMs }: { meta: DashboardData["meta"]; nowMs: numbe
   }
   const ageMin = meta.lastSyncAt ? (nowMs - ts(meta.lastSyncAt)) / 60_000 : Infinity;
   const failed = meta.lastSyncStatus === "failed";
-  const live = ageMin <= 150 && !failed; // синхронизация раз в 2 часа + запас
+  // "Live", пока с последней синхронизации прошло не больше трёх интервалов (минимум 30 минут).
+  const live = ageMin <= Math.max(30, (meta.syncIntervalMinutes ?? 120) * 3) && !failed;
   return (
     <span className="inline-flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
       <span className="relative flex size-2">
@@ -1905,7 +1908,11 @@ export default function MarketingFunnelDashboard({
 
             <footer className="flex flex-wrap items-center justify-between gap-2 pt-2 text-xs text-zinc-400 dark:text-zinc-500">
               <span>
-                Источник: {data?.meta.source === "api" ? "Bitrix24 CRM (снапшоты каждые 2 часа)" : "демо-данные, подключите apiUrl"} · {fmtInt(data?.rawEvents.length ?? 0)} событий
+                Источник:{" "}
+                {data?.meta.source === "api"
+                  ? `Bitrix24 CRM, обновление каждые ${data.meta.syncIntervalMinutes ?? 120} мин`
+                  : "демо-данные, подключите apiUrl"}{" "}
+                · {fmtInt(data?.rawEvents.length ?? 0)} событий
               </span>
               <span>Таблица каналов показывает все каналы, выбранный в фильтре подсвечен</span>
             </footer>

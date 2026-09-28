@@ -19,6 +19,7 @@ APP_ENCRYPTION_KEY=$(head -c 32 /dev/urandom | base64 | tr -d '\n')
 POSTGRES_PASSWORD=$(rand 48 32)
 APP_TIMEZONE=Europe/Moscow
 SYNC_HISTORY_DAYS=60
+SYNC_INTERVAL_SECONDS=900
 ENV
   chmod 600 .env
   echo ".env создан. Токен для входа в дашборд: $(grep '^API_TOKEN=' .env | cut -d= -f2)"

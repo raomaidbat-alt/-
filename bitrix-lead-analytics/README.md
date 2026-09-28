@@ -65,8 +65,8 @@ php bin/sync_leads.php                   # первый запуск сам ст
 ### Cron
 
 ```cron
-# инкремент каждые 2 часа
-0 */2 * * *  php /srv/b24-analytics/bin/sync_leads.php >> /srv/b24-analytics/var/log/cron.log 2>&1
+# инкремент каждые 15 минут
+*/15 * * * *  php /srv/b24-analytics/bin/sync_leads.php >> /srv/b24-analytics/var/log/cron.log 2>&1
 # раз в неделю полная сверка: подтягивает пропущенное и помечает удалённые лиды
 30 3 * * 0   php /srv/b24-analytics/bin/sync_leads.php --full >> /srv/b24-analytics/var/log/cron.log 2>&1
 ```
