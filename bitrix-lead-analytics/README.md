@@ -31,6 +31,8 @@ public/index.html  ← собранный dashboard/src/MarketingFunnelDashboard
 | `bin/install.php` | этап 2: создаёт таблицы (MySQL или PostgreSQL по DSN) |
 | `sql/mysql/001_schema.sql`, `sql/pgsql/001_schema.sql` | DDL |
 | `bin/sync_leads.php` | этап 3: ETL для cron |
+| `bin/generate_key.php` | ключ шифрования для пользовательских полей |
+| `src/Crypto.php` | шифрование libsodium |
 | `src/Bitrix/Client.php` | клиент REST: троттлинг, batch, ретраи с backoff |
 | `src/Sync/*` | маппинг лида, справочники, запись текущего состояния и снапшотов |
 | `public/api/analytics.php` | этап 4: агрегаты |
@@ -43,6 +45,7 @@ public/index.html  ← собранный dashboard/src/MarketingFunnelDashboard
 
 ```bash
 cp config.example.php config.php         # заполнить: webhook_url, db, api.token, channels
+php bin/generate_key.php                 # ключ шифрования → APP_ENCRYPTION_KEY (нужен, если задан sync.custom_fields)
 php bin/inspect_fields.php               # проверить доступ и посмотреть ID стадий/источников
 php bin/install.php                      # создать таблицы
 php bin/sync_leads.php                   # первый запуск сам станет полной выгрузкой
@@ -50,7 +53,7 @@ php bin/sync_leads.php                   # первый запуск сам ст
 
 Вебхук: в Bitrix24 «Разработчикам → Другое → Входящий вебхук», право **CRM**. Хватает прав на чтение. URL вебхука секретный: держите его в `config.php` или в переменной окружения `B24_WEBHOOK_URL`, в git он попадать не должен (`config.php` уже в `.gitignore`).
 
-Веб-сервер должен смотреть в `public/`. Всё остальное (`config.php`, `src/`, `var/`) снаружи недоступно.
+Веб-сервер должен смотреть в `public/` и работать по HTTPS. Всё остальное (`config.php`, `src/`, `var/`) снаружи недоступно.
 
 ### Cron
 
@@ -77,7 +80,31 @@ php bin/sync_leads.php                   # первый запуск сам ст
 
 **Удалённые лиды.** Инкремент удаления не видит, поэтому раз в неделю нужен `--full`. Лиды, которых нет в полной выгрузке, получают `is_deleted = 1` и снапшот `deleted`.
 
-**Что не хранится.** Телефоны, e-mail и другие контакты не запрашиваются. Пользовательские поля `UF_CRM_*` лежат в `leads_current.custom_fields` (JSON), их список с типами пишет `inspect_fields.php` в `var/schema_map.json`.
+**Что не хранится.** Персональные данные лида не запрашиваются и не хранятся, подробности в разделе ниже.
+
+## Персональные данные и шифрование
+
+**Что не уходит из Bitrix24.** Синк запрашивает у портала короткий белый список полей: ID, стадия, сумма, валюта, даты, источник, ответственный (ID сотрудника) и UTM-метки. Имя, фамилия, название лида (там часто стоит имя клиента), телефоны, e-mail, мессенджеры, адрес, компания, комментарии и «Дополнительно об источнике» не запрашиваются. Если портал всё же пришлёт лишнее, маппер возьмёт только поля из белого списка.
+
+**Пользовательские поля.** По умолчанию `UF_CRM_*` не выгружаются. Нужные аналитике (например, город или бюджет) перечисляются в `sync.custom_fields` и хранятся в `leads_current.custom_fields_enc` в зашифрованном виде. Поля с персональными данными (`NAME`, `PHONE`, `EMAIL`, `TITLE` и другие из `LeadMapper::FORBIDDEN`) из этого списка вырезаются автоматически, в лог пишется предупреждение.
+
+**Шифрование хранения.** libsodium secretbox (XSalsa20-Poly1305), ключ 32 байта:
+
+```bash
+php bin/generate_key.php            # напечатает ключ
+export APP_ENCRYPTION_KEY='…'       # храните в окружении/секретах сервера, не в git и не в базе
+```
+
+Без ключа зашифрованные поля из дампа базы не прочитать, подменённые данные не расшифруются. Если ключ сменили, запустите `php bin/sync_leads.php --full`: поля перезапишутся новым ключом.
+
+**Шифрование при передаче.**
+- Bitrix24: только `https://` с проверкой сертификата и TLS 1.2+; `http://` вебхук отклоняется (исключение `allow_insecure_http` нужно только мок-порталу в тестах).
+- API дашборда: запросы не по HTTPS получают `403 https_required` (кроме запросов с этой же машины), ответы идут с HSTS. За прокси учитывается `X-Forwarded-Proto`.
+- База: для MySQL укажите `db.ssl_ca`, для PostgreSQL добавьте в DSN `;sslmode=verify-full;sslrootcert=/path/ca.pem`.
+
+**Что видит дашборд.** В `api/events.php` и `api/analytics.php` нет ни одного персонального поля: только ID лида, канал, этапы, даты и суммы. В логах только счётчики и тексты ошибок API.
+
+**Как проверялось.** Мок-портал отдавал имя, телефон, e-mail и ник в каждом лиде и вообще игнорировал список полей (`MOCK_IGNORE_SELECT=1`). После 37 синхронизаций в полном дампе базы, логах и ответах API не нашлось ни одного из этих значений; город из разрешённого поля лежал только в зашифрованном виде.
 
 ## Дашборд
 
@@ -148,7 +175,7 @@ npm run build   # кладёт index.html и assets/ в ../public
 
 ```bash
 php -S 127.0.0.1:8099 tests/mock-bitrix/router.php &            # MOCK_FAIL_RATE=0.15 даст 15% ответов 503
-# в config.php: webhook_url = http://127.0.0.1:8099/rest/1/testtoken/
+# в config.php: webhook_url = http://127.0.0.1:8099/rest/1/testtoken/, bitrix.allow_insecure_http = true
 php bin/install.php
 php tests/mock-bitrix/advance.php --seed=700 --start="-45 days" --end="-3 days"
 SYNC_NOW="$(php tests/mock-bitrix/advance.php --now)" php bin/sync_leads.php

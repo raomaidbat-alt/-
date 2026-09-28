@@ -1,5 +1,6 @@
 -- Bitrix24 Lead Analytics: схема для MySQL 8.0.19+
 -- Все даты хранятся в UTC (соединение выставляет time_zone = '+00:00').
+-- Персональных данных лида (имя, название, контакты) в схеме нет.
 -- Применение: php bin/install.php  (или mysql b24_analytics < sql/mysql/001_schema.sql)
 
 CREATE TABLE IF NOT EXISTS sync_runs (
@@ -41,7 +42,6 @@ CREATE TABLE IF NOT EXISTS sources_directory (
 
 CREATE TABLE IF NOT EXISTS leads_current (
     bitrix_id          BIGINT UNSIGNED NOT NULL,
-    title              VARCHAR(500)  NULL,
     status_id          VARCHAR(50)   NOT NULL,
     status_semantics   CHAR(1)       NOT NULL DEFAULT 'P',
     max_stage_sort     INT           NOT NULL DEFAULT 0,  -- самая дальняя стадия (P/S), до которой дошёл лид
@@ -50,7 +50,6 @@ CREATE TABLE IF NOT EXISTS leads_current (
     opportunity        DECIMAL(18,2) NOT NULL DEFAULT 0,
     currency_id        VARCHAR(8)    NULL,
     source_id          VARCHAR(50)   NULL,
-    source_description TEXT          NULL,
     assigned_by_id     BIGINT        NULL,
     utm_source         VARCHAR(255)  NULL,
     utm_medium         VARCHAR(255)  NULL,
@@ -59,7 +58,7 @@ CREATE TABLE IF NOT EXISTS leads_current (
     utm_term           VARCHAR(255)  NULL,
     date_create        DATETIME      NOT NULL,
     date_modify        DATETIME      NULL,
-    custom_fields      JSON          NULL,
+    custom_fields_enc  TEXT          NULL,                -- разрешённые UF_CRM_*, libsodium secretbox
     row_hash           CHAR(64)      NOT NULL,
     is_deleted         TINYINT       NOT NULL DEFAULT 0,
     first_seen_at      DATETIME      NOT NULL,

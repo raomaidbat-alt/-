@@ -43,6 +43,10 @@ final class Client
                 'Webhook URL must look like https://portal.bitrix24.ru/rest/<user_id>/<token>/'
             );
         }
+        // Токен вебхука и данные CRM идут только по HTTPS с проверкой сертификата.
+        if (!str_starts_with($webhookUrl, 'https://') && empty($opt['allow_insecure_http'])) {
+            throw new \InvalidArgumentException('Webhook URL must use https:// (plain http is allowed only for local tests)');
+        }
         $this->baseUrl = rtrim($webhookUrl, '/') . '/';
     }
 
@@ -211,6 +215,8 @@ final class Client
             CURLOPT_USERAGENT => 'b24-lead-analytics/1.0',
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_PROTOCOLS => empty($this->opt['allow_insecure_http']) ? CURLPROTO_HTTPS : (CURLPROTO_HTTPS | CURLPROTO_HTTP),
+            CURLOPT_SSLVERSION => CURL_SSLVERSION_TLSv1_2,
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_ENCODING => '',
             CURLOPT_HEADERFUNCTION => static function ($ch, string $header) use (&$retryAfter): int {

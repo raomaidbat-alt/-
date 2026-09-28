@@ -57,9 +57,23 @@ final class SyncService
             // половину лидов и снапшотов, следующий запуск начнёт с того же водяного знака.
             $this->db->pdo->beginTransaction();
 
+            $requested = array_map('strtoupper', $this->cfg['sync']['custom_fields'] ?? []);
+            $customFields = array_values(array_diff($requested, LeadMapper::FORBIDDEN));
+            if ($blocked = array_intersect($requested, LeadMapper::FORBIDDEN)) {
+                $this->log->warning('Personal data fields removed from sync.custom_fields', ['fields' => array_values($blocked)]);
+            }
+            $select = LeadMapper::select($customFields);
+            $crypto = null;
+            if ($customFields) {
+                $key = (string) ($this->cfg['security']['encryption_key'] ?? '');
+                if ($key === '') {
+                    throw new \RuntimeException('sync.custom_fields is set, but security.encryption_key is empty (run bin/generate_key.php)');
+                }
+                $crypto = new \App\Crypto($key);
+            }
             $params = [
                 'order' => ['ID' => 'ASC'],
-                'select' => LeadMapper::SELECT,
+                'select' => $select,
                 'filter' => [],
             ];
             if ($watermark !== null) {
@@ -78,7 +92,7 @@ final class SyncService
                         continue;
                     }
                     $seen[$id] = true;
-                    $leads[] = LeadMapper::map($raw);
+                    $leads[] = LeadMapper::map($raw, $customFields, $crypto);
                 }
                 if ($dryRun) {
                     continue;

@@ -6,17 +6,49 @@ namespace App\Sync;
 /**
  * Приводит сырую запись crm.lead.list к колонкам leads_current.
  * Даты Bitrix24 приходят в ISO 8601 с поясом портала, в БД кладём UTC.
+ *
+ * Персональные данные лида не запрашиваются вовсе: ни имя, ни фамилия, ни название лида
+ * (там часто стоит имя клиента), ни телефоны, e-mail, мессенджеры, адрес, компания,
+ * ни свободный текст "Дополнительно об источнике". Пользовательские поля UF_CRM_*
+ * выгружаются только из явного списка в config.php и хранятся зашифрованными.
  */
 final class LeadMapper
 {
-    /** Что запрашиваем у crm.lead.list. Телефоны и e-mail намеренно не тянем: аналитике они не нужны. */
+    /** Белый список полей crm.lead.list. Ничего сверх него портал не отдаёт. */
     public const SELECT = [
-        'ID', 'TITLE', 'STATUS_ID', 'OPPORTUNITY', 'CURRENCY_ID',
+        'ID', 'STATUS_ID', 'OPPORTUNITY', 'CURRENCY_ID',
         'DATE_CREATE', 'DATE_MODIFY', 'MOVED_TIME',
-        'SOURCE_ID', 'SOURCE_DESCRIPTION', 'ASSIGNED_BY_ID',
+        'SOURCE_ID', 'ASSIGNED_BY_ID',
         'UTM_SOURCE', 'UTM_MEDIUM', 'UTM_CAMPAIGN', 'UTM_CONTENT', 'UTM_TERM',
-        'UF_*',
     ];
+
+    /**
+     * Поля с персональными данными: запрещены даже в списке custom_fields конфига.
+     * Страховка от ошибки в настройке.
+     */
+    public const FORBIDDEN = [
+        'TITLE', 'NAME', 'SECOND_NAME', 'LAST_NAME', 'HONORIFIC', 'BIRTHDATE', 'POST',
+        'PHONE', 'EMAIL', 'WEB', 'IM', 'LINK', 'ADDRESS', 'COMPANY_TITLE', 'COMMENTS',
+        'SOURCE_DESCRIPTION', 'STATUS_DESCRIPTION', 'CONTACT_ID', 'CONTACT_IDS', 'COMPANY_ID',
+    ];
+
+    /**
+     * Итоговый select: базовые поля + разрешённые пользовательские поля.
+     * @param list<string> $customFields коды UF_CRM_* из config.php (sync.custom_fields)
+     * @return list<string>
+     */
+    public static function select(array $customFields): array
+    {
+        $extra = [];
+        foreach ($customFields as $code) {
+            $code = strtoupper(trim((string) $code));
+            if (!preg_match('/^UF_CRM_[A-Z0-9_]+$/', $code)) {
+                throw new \InvalidArgumentException("sync.custom_fields: only UF_CRM_* codes are allowed, got {$code}");
+            }
+            $extra[] = $code;
+        }
+        return array_values(array_unique(array_merge(self::SELECT, $extra)));
+    }
 
     /** Поля, изменение которых порождает новый снапшот. */
     private const HASHED = [
@@ -25,26 +57,33 @@ final class LeadMapper
     ];
 
     /**
+     * @param list<string> $customFields разрешённые UF_CRM_* (только они попадут в БД)
      * @return array<string,mixed> нормализованная запись + служебное поле _moved_time
      */
-    public static function map(array $raw): array
+    public static function map(array $raw, array $customFields = [], ?\App\Crypto $crypto = null): array
     {
+        // Берём только разрешённые поля, даже если портал прислал больше.
         $custom = [];
-        foreach ($raw as $k => $v) {
-            if (str_starts_with((string) $k, 'UF_CRM_')) {
-                $custom[$k] = $v;
+        foreach ($customFields as $code) {
+            if (array_key_exists($code, $raw)) {
+                $custom[$code] = $raw[$code];
             }
         }
         ksort($custom);
+        $customEnc = null;
+        if ($custom) {
+            if ($crypto === null) {
+                throw new \RuntimeException('Custom fields require security.encryption_key');
+            }
+            $customEnc = $crypto->encrypt(json_encode($custom, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        }
 
         $lead = [
             'bitrix_id' => (int) $raw['ID'],
-            'title' => self::str($raw['TITLE'] ?? null, 500),
             'status_id' => (string) ($raw['STATUS_ID'] ?? 'NEW'),
             'opportunity' => number_format((float) ($raw['OPPORTUNITY'] ?? 0), 2, '.', ''),
             'currency_id' => self::str($raw['CURRENCY_ID'] ?? null, 8),
             'source_id' => self::str($raw['SOURCE_ID'] ?? null, 50),
-            'source_description' => self::str($raw['SOURCE_DESCRIPTION'] ?? null, 65000),
             'assigned_by_id' => isset($raw['ASSIGNED_BY_ID']) && $raw['ASSIGNED_BY_ID'] !== '' ? (int) $raw['ASSIGNED_BY_ID'] : null,
             'utm_source' => self::str($raw['UTM_SOURCE'] ?? null, 255),
             'utm_medium' => self::str($raw['UTM_MEDIUM'] ?? null, 255),
@@ -53,7 +92,7 @@ final class LeadMapper
             'utm_term' => self::str($raw['UTM_TERM'] ?? null, 255),
             'date_create' => self::utc($raw['DATE_CREATE'] ?? null) ?? gmdate('Y-m-d H:i:s'),
             'date_modify' => self::utc($raw['DATE_MODIFY'] ?? null),
-            'custom_fields' => $custom ? json_encode($custom, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
+            'custom_fields_enc' => $customEnc,
             '_moved_time' => self::utc($raw['MOVED_TIME'] ?? null),
         ];
         $lead['row_hash'] = self::hash($lead);

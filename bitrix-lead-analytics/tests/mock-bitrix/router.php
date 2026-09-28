@@ -81,8 +81,17 @@ function mock_dispatch(string $method, array $p, array $state): array
             usort($leads, static fn ($a, $b) => (int) $a['ID'] <=> (int) $b['ID']);
             $start = (int) ($p['start'] ?? 0);
             $page = array_slice($leads, $start, 50);
-            $page = array_map(static function ($l) {
+            // Честный портал отдаёт только запрошенные поля. MOCK_IGNORE_SELECT=1 имитирует худший случай:
+            // портал прислал всё, включая имя и телефон, и защищаться должен наш маппер.
+            $select = (array) ($p['select'] ?? []);
+            if ($logFile = getenv('MOCK_SELECT_LOG')) {
+                file_put_contents($logFile, implode(',', $select) . "\n", FILE_APPEND);
+            }
+            $page = array_map(static function ($l) use ($select) {
                 unset($l['_deleted']);
+                if ($select && !getenv('MOCK_IGNORE_SELECT')) {
+                    $l = array_intersect_key($l, array_flip($select));
+                }
                 return $l;
             }, $page);
             $r = ['result' => $page, 'total' => count($leads)];

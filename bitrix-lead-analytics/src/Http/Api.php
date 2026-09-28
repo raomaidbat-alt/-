@@ -29,6 +29,18 @@ final class Api
             header('Access-Control-Allow-Headers: Authorization, X-Api-Token');
             header('Access-Control-Allow-Methods: GET, OPTIONS');
         }
+        // Токен и данные ходят только по HTTPS. Исключение: запросы с этой же машины (разработка).
+        $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+            || strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https';
+        $local = in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true);
+        if (!$https && !$local && ($cfg['api']['require_https'] ?? true)) {
+            self::respond(403, ['error' => 'https_required']);
+        }
+        if ($https) {
+            header('Strict-Transport-Security: max-age=31536000');
+        }
+        header('Referrer-Policy: no-referrer');
+
         $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
         if ($method === 'OPTIONS') {
             http_response_code(204);

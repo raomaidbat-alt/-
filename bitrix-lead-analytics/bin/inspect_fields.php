@@ -25,14 +25,12 @@ $b24 = new Client($cfg['bitrix']['webhook_url'], $log, $cfg['bitrix']);
 /** Стандартное поле Bitrix24 → колонка leads_current. */
 const STANDARD_MAP = [
     'ID' => 'bitrix_id',
-    'TITLE' => 'title',
     'STATUS_ID' => 'status_id',
     'OPPORTUNITY' => 'opportunity',
     'CURRENCY_ID' => 'currency_id',
     'DATE_CREATE' => 'date_create',
     'DATE_MODIFY' => 'date_modify',
     'SOURCE_ID' => 'source_id',
-    'SOURCE_DESCRIPTION' => 'source_description',
     'ASSIGNED_BY_ID' => 'assigned_by_id',
     'UTM_SOURCE' => 'utm_source',
     'UTM_MEDIUM' => 'utm_medium',
@@ -88,7 +86,9 @@ foreach ($fields as $code => $f) {
         'is_read_only' => (bool) ($f['isReadOnly'] ?? false),
     ];
     if (str_starts_with($code, 'UF_CRM_')) {
-        $entry['storage'] = 'leads_current.custom_fields->' . $code;
+        $entry['storage'] = in_array($code, array_map('strtoupper', $cfg['sync']['custom_fields'] ?? []), true)
+            ? 'leads_current.custom_fields_enc (зашифровано)'
+            : 'не выгружается (нет в sync.custom_fields)';
         $entry['suggested_sql_type'] = sqlTypeFor($type, $multiple);
         if (!empty($f['items']) && is_array($f['items'])) {
             $entry['items'] = array_map(
@@ -149,11 +149,12 @@ if ($missing) {
     echo "\n  ! На портале нет полей: ", implode(', ', $missing), "\n";
 }
 
-echo "\nПользовательские поля (UF_CRM_*) → custom_fields (JSON): ", count($custom), "\n";
+echo "\nПользовательские поля (UF_CRM_*): ", count($custom), ". Выгружаются только коды из sync.custom_fields, в зашифрованном виде.\n";
 if ($custom) {
-    $line('КОД', 'НАЗВАНИЕ', 'ТИП', 'SQL, если выносить в колонку');
+    $line('КОД', 'НАЗВАНИЕ', 'ТИП', 'ВЫГРУЗКА');
     foreach ($custom as $f) {
-        $line($f['code'], mb_strimwidth($f['title'], 0, 32, '…'), $f['type'] . ($f['is_multiple'] ? '[]' : ''), $f['suggested_sql_type']);
+        $on = str_starts_with($f['storage'], 'leads_current');
+        $line($f['code'], mb_strimwidth($f['title'], 0, 32, '…'), $f['type'] . ($f['is_multiple'] ? '[]' : ''), $on ? 'да, шифруется' : 'нет');
     }
 }
 

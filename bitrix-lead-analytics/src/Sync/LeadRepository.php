@@ -15,10 +15,10 @@ use App\Db;
 final class LeadRepository
 {
     private const CURRENT_COLUMNS = [
-        'bitrix_id', 'title', 'status_id', 'status_semantics', 'max_stage_sort', 'is_qualified',
-        'stage_entered_at', 'opportunity', 'currency_id', 'source_id', 'source_description',
+        'bitrix_id', 'status_id', 'status_semantics', 'max_stage_sort', 'is_qualified',
+        'stage_entered_at', 'opportunity', 'currency_id', 'source_id',
         'assigned_by_id', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term',
-        'date_create', 'date_modify', 'custom_fields', 'row_hash', 'is_deleted',
+        'date_create', 'date_modify', 'custom_fields_enc', 'row_hash', 'is_deleted',
         'first_seen_at', 'last_synced_at', 'last_seen_run_id',
     ];
 
@@ -90,7 +90,6 @@ final class LeadRepository
 
             $row = [
                 'bitrix_id' => $id,
-                'title' => $lead['title'],
                 'status_id' => $status,
                 'status_semantics' => $semantics,
                 'max_stage_sort' => $maxSort,
@@ -99,7 +98,6 @@ final class LeadRepository
                 'opportunity' => $lead['opportunity'],
                 'currency_id' => $lead['currency_id'],
                 'source_id' => $lead['source_id'],
-                'source_description' => $lead['source_description'],
                 'assigned_by_id' => $lead['assigned_by_id'],
                 'utm_source' => $lead['utm_source'],
                 'utm_medium' => $lead['utm_medium'],
@@ -108,7 +106,7 @@ final class LeadRepository
                 'utm_term' => $lead['utm_term'],
                 'date_create' => $lead['date_create'],
                 'date_modify' => $lead['date_modify'],
-                'custom_fields' => $lead['custom_fields'],
+                'custom_fields_enc' => $lead['custom_fields_enc'],
                 'row_hash' => $lead['row_hash'],
                 'is_deleted' => 0,
                 'first_seen_at' => $firstSeen,

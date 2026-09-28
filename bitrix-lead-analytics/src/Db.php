@@ -14,14 +14,23 @@ final class Db
     public readonly PDO $pdo;
     public readonly string $driver; // mysql | pgsql
 
-    public function __construct(string $dsn, ?string $user, ?string $password)
+    /**
+     * @param string|null $sslCa путь к CA-сертификату сервера БД для TLS (MySQL).
+     *        Для PostgreSQL TLS включается в DSN: ";sslmode=verify-full;sslrootcert=/path/ca.pem".
+     */
+    public function __construct(string $dsn, ?string $user, ?string $password, ?string $sslCa = null)
     {
-        $this->pdo = new PDO($dsn, $user, $password, [
+        $opts = [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES => false,
             PDO::ATTR_STRINGIFY_FETCHES => false,
-        ]);
+        ];
+        if ($sslCa !== null && $sslCa !== '' && str_starts_with($dsn, 'mysql:')) {
+            $opts[PDO::MYSQL_ATTR_SSL_CA] = $sslCa;
+            $opts[PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT] = true;
+        }
+        $this->pdo = new PDO($dsn, $user, $password, $opts);
         $this->driver = (string) $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
         if (!in_array($this->driver, ['mysql', 'pgsql'], true)) {
             throw new \RuntimeException("Unsupported PDO driver: {$this->driver}");
@@ -35,7 +44,7 @@ final class Db
 
     public static function fromConfig(array $cfg): self
     {
-        return new self($cfg['dsn'], $cfg['user'] ?? null, $cfg['password'] ?? null);
+        return new self($cfg['dsn'], $cfg['user'] ?? null, $cfg['password'] ?? null, $cfg['ssl_ca'] ?? null);
     }
 
     public function all(string $sql, array $params = []): array
