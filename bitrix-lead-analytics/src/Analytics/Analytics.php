@@ -285,6 +285,12 @@ final class Analytics
     private function marketingFunnel(array $kpi, array $statuses, string $where, array $params, array $f, float $days): array
     {
         $consultStatus = $this->funnelCfg['consultation_status'] ?? null;
+        // Можно указать кодом стадии или её названием.
+        foreach ($statuses as $sid => $st) {
+            if ($consultStatus !== null && mb_strtolower(trim($st['name'])) === mb_strtolower(trim((string) $consultStatus))) {
+                $consultStatus = $sid;
+            }
+        }
         $consult = null;
         if ($consultStatus !== null && isset($statuses[$consultStatus])) {
             $row = $this->db->one(

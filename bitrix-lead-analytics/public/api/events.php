@@ -58,10 +58,13 @@ try {
             'lastSyncStatus' => $sync['last_run']['status'] ?? null,
             'currency' => $feed['currency'],
             'timezone' => $tz->getName(),
+            // Для ссылок "открыть лид в Bitrix24": только адрес портала, без токена вебхука.
+            'portalUrl' => ($host = parse_url((string) ($cfg['bitrix']['webhook_url'] ?? ''), PHP_URL_HOST)) ? 'https://' . $host : null,
         ],
         'channels' => $feed['channels'],
         'rawEvents' => $feed['rawEvents'],
         'channelDaily' => $feed['channelDaily'],
+        'statuses' => $feed['statuses'],
     ]);
 } catch (Throwable $e) {
     (new Logger('api', $cfg['app']['log_dir'] ?? null, 'error', false))

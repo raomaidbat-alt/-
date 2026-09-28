@@ -26,21 +26,27 @@ final class EventFeed
      */
     public function build(string $fromUtc, string $toUtc, \DateTimeZone $tz): array
     {
-        $statuses = $this->db->all('SELECT status_id, sort, semantics FROM statuses_directory');
+        $statuses = $this->db->all('SELECT status_id, name, sort, color, semantics FROM statuses_directory ORDER BY sort');
+        $sourceNames = [];
+        foreach ($this->db->all('SELECT source_id, name FROM sources_directory') as $r) {
+            $sourceNames[$r['source_id']] = $r['name'];
+        }
         $processSorts = array_map(
             static fn ($s) => (int) $s['sort'],
             array_filter($statuses, static fn ($s) => $s['semantics'] === 'P')
         );
         $initialSort = $processSorts ? min($processSorts) : 0;
         $consultSort = null;
+        // Стадию консультации можно указать кодом (UC_XXXX) или названием, как в Bitrix24.
+        $consultCfg = mb_strtolower(trim((string) ($this->funnelCfg['consultation_status'] ?? '')));
         foreach ($statuses as $s) {
-            if ($s['status_id'] === ($this->funnelCfg['consultation_status'] ?? null)) {
+            if ($consultCfg !== '' && ($consultCfg === mb_strtolower($s['status_id']) || $consultCfg === mb_strtolower(trim($s['name'])))) {
                 $consultSort = (int) $s['sort'];
             }
         }
 
         $leads = $this->db->all(
-            "SELECT l.bitrix_id, l.date_create, l.source_id, l.utm_source, l.status_semantics,
+            "SELECT l.bitrix_id, l.date_create, l.source_id, l.utm_source, l.status_id, l.status_semantics,
                     l.max_stage_sort, l.is_qualified, l.opportunity, l.currency_id
                FROM leads_current l
               WHERE l.is_deleted = 0 AND l.date_create BETWEEN ? AND ?
@@ -104,6 +110,10 @@ final class EventFeed
                 'sqlAt' => $stage !== 'lead' ? $iso($m['sql_at'] ?? null) : null,
                 'consultAt' => in_array($stage, ['consult', 'paid'], true) ? $iso($m['consult_at'] ?? null) : null,
                 'paidAt' => $stage === 'paid' ? $iso($m['paid_at'] ?? null) : null,
+                'status' => $l['status_id'],
+                'source' => $l['source_id'] !== null ? ($sourceNames[$l['source_id']] ?? $l['source_id']) : null,
+                'utmSource' => $l['utm_source'],
+                'amount' => (float) $l['opportunity'],
             ];
         }
 
@@ -139,6 +149,13 @@ final class EventFeed
             ),
             'rawEvents' => $events,
             'channelDaily' => $channelDaily,
+            'statuses' => array_map(static fn ($s) => [
+                'id' => $s['status_id'],
+                'name' => $s['name'],
+                'color' => $s['color'],
+                'semantics' => $s['semantics'],
+                'sort' => (int) $s['sort'],
+            ], $statuses),
         ];
     }
 }

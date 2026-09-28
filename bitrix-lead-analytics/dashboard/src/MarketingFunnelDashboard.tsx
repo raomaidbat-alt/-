@@ -11,7 +11,7 @@
  *
  * Зависимости: react, recharts, lucide-react, tailwindcss (dark-режим через класс .dark на <html>).
  */
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Area,
   AreaChart,
@@ -31,6 +31,10 @@ import {
   ArrowUp,
   ArrowUpDown,
   Banknote,
+  ChevronDown,
+  Cog,
+  ExternalLink,
+  ListChecks,
   Bot,
   Briefcase,
   Clapperboard,
@@ -76,6 +80,22 @@ export interface LeadEvent {
   sqlAt: string | null;
   consultAt: string | null;
   paidAt: string | null;
+  /** Текущая стадия лида в CRM (код стадии) */
+  status?: string;
+  /** Источник в CRM, как он называется в справочнике */
+  source?: string | null;
+  utmSource?: string | null;
+  /** Сумма лида (сделки) в основной валюте */
+  amount?: number;
+}
+
+/** Стадия лида из CRM: название, цвет и смысл (P в работе, S успех, F брак/отказ). */
+export interface StatusDef {
+  id: string;
+  name: string;
+  color: string | null;
+  semantics: "P" | "S" | "F" | string;
+  sort: number;
 }
 
 export interface ChannelDef {
@@ -105,10 +125,13 @@ export interface DashboardData {
     lastSyncStatus?: string | null;
     currency: CurrencyCode;
     timezone?: string;
+    /** Адрес портала CRM для ссылок на карточку лида */
+    portalUrl?: string | null;
   };
   channels: ChannelDef[];
   rawEvents: LeadEvent[];
   channelDaily: ChannelDailyStat[];
+  statuses?: StatusDef[];
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -146,12 +169,14 @@ export function generateMockDashboardData(now: Date = new Date(), seed = 2026092
   const rnd = mulberry32(seed);
   const channels: (ChannelDef & {
     perDay: number; reach: number; spend: number;
-    pSql: number; pConsult: number; pPaid: number; check: [number, number];
+    pSql: number; pConsult: number; pPaid: number; check: [number, number]; sources: string[];
   })[] = [
-    { id: "reels", label: "Reels / Органика", perDay: 7.5, reach: 4200, spend: 11_000, pSql: 0.52, pConsult: 0.48, pPaid: 0.34, check: [18_000, 42_000] },
-    { id: "telegram", label: "Telegram-канал", perDay: 4.6, reach: 1600, spend: 9_500, pSql: 0.68, pConsult: 0.58, pPaid: 0.44, check: [24_000, 58_000] },
-    { id: "base", label: "База / Рассылки", perDay: 3.1, reach: 650, spend: 5_200, pSql: 0.61, pConsult: 0.55, pPaid: 0.49, check: [19_000, 38_000] },
-    { id: "partners", label: "Партнеры / Инвайтинг", perDay: 1.4, reach: 320, spend: 8_500, pSql: 0.79, pConsult: 0.7, pPaid: 0.55, check: [40_000, 90_000] },
+    { id: "lead_harvester", label: "Lead Harvester", icon: "target", perDay: 3.2, reach: 2600, spend: 6_000, pSql: 0.5, pConsult: 0.45, pPaid: 0.3, check: [60_000, 180_000], sources: ["Lead Harvester"] },
+    { id: "tg_bot", label: "Заявки из чатов (ТГ Бот)", icon: "bot", perDay: 2.8, reach: 1800, spend: 4_500, pSql: 0.55, pConsult: 0.5, pPaid: 0.32, check: [50_000, 150_000], sources: ["Заявки из чатов (ТГ Бот)"] },
+    { id: "profi", label: "Профи", icon: "briefcase", perDay: 1.1, reach: 700, spend: 3_000, pSql: 0.7, pConsult: 0.6, pPaid: 0.45, check: [80_000, 220_000], sources: ["Профи"] },
+    { id: "email_marketer", label: "E-mail рассылка от маркетолога", icon: "mail", perDay: 0.8, reach: 900, spend: 1_500, pSql: 0.6, pConsult: 0.5, pPaid: 0.35, check: [50_000, 120_000], sources: ["E-mail рассылка от маркетолога"] },
+    { id: "coldy", label: "Рассылка Coldy", icon: "megaphone", perDay: 0.9, reach: 1500, spend: 2_000, pSql: 0.4, pConsult: 0.4, pPaid: 0.25, check: [40_000, 110_000], sources: ["Рассылка Coldy"] },
+    { id: "other", label: "Другие источники", perDay: 2.2, reach: 0, spend: 0, pSql: 0.5, pConsult: 0.45, pPaid: 0.3, check: [40_000, 140_000], sources: ["Звонок", "Веб-сайт", "По рекомендации", "Авито"] },
   ];
   const days = 400;
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days + 1);
@@ -202,16 +227,23 @@ export function generateMockDashboardData(now: Date = new Date(), seed = 2026092
         }
         const ageDays = (now.getTime() - created.getTime()) / DAY_MS;
         const lost = stage !== "paid" && ageDays > 10 && rnd() < 0.78;
+        const amount = Math.round((ch.check[0] + rnd() * (ch.check[1] - ch.check[0])) / 1000) * 1000;
+        const status = lost
+          ? rnd() < 0.6 ? "JUNK" : "UC_REFUSED"
+          : { lead: "NEW", sql: "IN_PROCESS", consult: rnd() < 0.5 ? "UC_CONSULT" : "UC_OFFER", paid: "CONVERTED" }[stage];
         events.push({
           id: String(id++),
           createdAt: toLocalIso(created),
           channel: ch.id,
           stage,
           lost,
-          revenue: stage === "paid" ? Math.round((ch.check[0] + rnd() * (ch.check[1] - ch.check[0])) / 500) * 500 : 0,
+          revenue: stage === "paid" ? amount : 0,
           sqlAt: sqlAt && toLocalIso(sqlAt),
           consultAt: consultAt && toLocalIso(consultAt),
           paidAt: paidAt && toLocalIso(paidAt),
+          status,
+          source: ch.sources[Math.floor(rnd() * ch.sources.length)],
+          amount,
         });
       }
     }
@@ -225,10 +257,20 @@ export function generateMockDashboardData(now: Date = new Date(), seed = 2026092
       lastSyncAt: toLocalIso(new Date(now.getTime() - 17 * 60_000)),
       lastSyncStatus: "success",
       currency: "RUB",
+      portalUrl: null,
     },
-    channels: channels.map(({ id: cid, label }) => ({ id: cid, label })),
+    channels: channels.map(({ id: cid, label, icon }) => ({ id: cid, label, icon })),
     rawEvents: events,
-    channelDaily,
+    channelDaily: channelDaily.filter((d) => d.channel !== "other"),
+    statuses: [
+      { id: "NEW", name: "Новая заявка", color: "#39A8EF", semantics: "P", sort: 10 },
+      { id: "IN_PROCESS", name: "Квалификация", color: "#2FC6F6", semantics: "P", sort: 20 },
+      { id: "UC_CONSULT", name: "Разбор назначен", color: "#55D0E0", semantics: "P", sort: 30 },
+      { id: "UC_OFFER", name: "КП отправлено", color: "#FFA900", semantics: "P", sort: 40 },
+      { id: "CONVERTED", name: "Оплата", color: "#7BD500", semantics: "S", sort: 50 },
+      { id: "JUNK", name: "Некачественный лид", color: "#FF5752", semantics: "F", sort: 60 },
+      { id: "UC_REFUSED", name: "Отказ", color: "#D44D5C", semantics: "F", sort: 70 },
+    ],
   };
 }
 
@@ -260,6 +302,7 @@ export async function fetchDashboardData(
     channels: raw.channels,
     rawEvents: raw.rawEvents.map((e) => ({ ...e, revenue: Number(e.revenue) || 0 })),
     channelDaily: (raw.channelDaily ?? []).map((d) => ({ ...d, reach: Number(d.reach) || 0, spend: Number(d.spend) || 0 })),
+    statuses: raw.statuses ?? [],
   };
 }
 
@@ -486,6 +529,57 @@ export function computeSeries(events: LeadEvent[], from: number, to: number, buc
   return [...points.values()];
 }
 
+export interface SourceRow {
+  source: string;
+  leads: number;
+  paid: number;
+  lost: number;
+}
+
+/** Из каких источников CRM состоит каждый канал (лиды, созданные в окне). */
+export function computeSourcesByChannel(events: LeadEvent[], from: number, to: number): Map<ChannelId, SourceRow[]> {
+  const acc = new Map<ChannelId, Map<string, SourceRow>>();
+  for (const e of events) {
+    if (!inRange(e.createdAt, from, to)) continue;
+    const name = e.source?.trim() || (e.utmSource ? `utm: ${e.utmSource}` : "Без источника");
+    const byChannel = acc.get(e.channel) ?? new Map<string, SourceRow>();
+    const row = byChannel.get(name) ?? { source: name, leads: 0, paid: 0, lost: 0 };
+    row.leads++;
+    if (e.stage === "paid") row.paid++;
+    if (e.lost) row.lost++;
+    byChannel.set(name, row);
+    acc.set(e.channel, byChannel);
+  }
+  return new Map([...acc].map(([k, v]) => [k, [...v.values()].sort((a, b) => b.leads - a.leads)]));
+}
+
+export interface StageCount extends StatusDef {
+  count: number;
+  share: number;
+  amount: number;
+}
+
+/** Сколько лидов когорты сейчас на каждой стадии CRM. */
+export function computeStageCounts(events: LeadEvent[], statuses: StatusDef[], from: number, to: number): StageCount[] {
+  const cohort = events.filter((e) => inRange(e.createdAt, from, to));
+  const counts = new Map<string, { count: number; amount: number }>();
+  for (const e of cohort) {
+    const k = e.status ?? (e.lost ? "JUNK" : e.stage);
+    const c = counts.get(k) ?? { count: 0, amount: 0 };
+    c.count++;
+    c.amount += e.amount ?? 0;
+    counts.set(k, c);
+  }
+  const known = [...statuses].sort((a, b) => a.sort - b.sort);
+  for (const k of counts.keys()) {
+    if (!known.some((s) => s.id === k)) known.push({ id: k, name: k, color: null, semantics: "P", sort: 9999 });
+  }
+  return known.map((s) => {
+    const c = counts.get(s.id) ?? { count: 0, amount: 0 };
+    return { ...s, count: c.count, amount: c.amount, share: cohort.length ? c.count / cohort.length : 0 };
+  });
+}
+
 // ── 2.4 Хук данных: моки или API, автообновление ────────────────────────────────────
 
 interface DataState {
@@ -547,13 +641,35 @@ function useDashboardData(opts: {
  * 3. PRESENTATION
  * ═════════════════════════════════════════════════════════════════════════ */
 
+/** Фирменные цвета ФОРАЙТИ: глубокий синий + оранжевый акцент. */
 const COLORS = {
-  indigo: "#6366f1",
+  orange: "#ff7a1a",
   blue: "#3b82f6",
+  sky: "#60a5fa",
   emerald: "#10b981",
   amber: "#f59e0b",
   red: "#ef4444",
 };
+const DISPLAY_FONT = { fontFamily: "'Montserrat', 'Inter', ui-sans-serif, system-ui, sans-serif" };
+
+/**
+ * Тёмная тема в фирменной гамме: нейтральные zinc-оттенки подменяются на тёмно-синие
+ * (Tailwind v4 берёт цвета из CSS-переменных), фон с синим свечением как на лендинге.
+ */
+const BRAND_CSS = `
+html.dark .mfd-root {
+  --color-zinc-50:#f5f7fd; --color-zinc-100:#e8edf8; --color-zinc-200:#cfd8ee; --color-zinc-300:#a9b7dc;
+  --color-zinc-400:#8595c2; --color-zinc-500:#6474a3; --color-zinc-600:#46568a; --color-zinc-700:#2a3d73;
+  --color-zinc-800:#1a2c5e; --color-zinc-900:#0f1f4a; --color-zinc-950:#07142f;
+  background:
+    radial-gradient(900px 520px at 88% -8%, rgba(37,99,235,.45), transparent 60%),
+    radial-gradient(700px 420px at -10% 110%, rgba(255,122,26,.10), transparent 60%),
+    linear-gradient(180deg, #0a1a40 0%, #07142f 900px, #07142f 100%);
+  background-color: #07142f;
+}
+html.dark, html.dark body { background-color: #07142f; }
+html.dark .mfd-root section { backdrop-filter: blur(6px); }
+`;
 
 const CHANNEL_STYLE: Record<string, { icon: LucideIcon; color: string }> = {
   reels: { icon: Clapperboard, color: "#6366f1" },
@@ -566,7 +682,7 @@ const ICONS: Record<string, LucideIcon> = {
   send: Send, mail: Mail, bot: Bot, users: Users, briefcase: Briefcase, megaphone: Megaphone,
   handshake: Handshake, clapperboard: Clapperboard, target: Target, layers: Layers,
 };
-const PALETTE = ["#6366f1", "#3b82f6", "#8b5cf6", "#14b8a6", "#f59e0b", "#ec4899", "#0ea5e9", "#84cc16"];
+const PALETTE = ["#ff7a1a", "#3b82f6", "#22c55e", "#a855f7", "#eab308", "#ec4899", "#06b6d4", "#84cc16"];
 
 /** Иконка и цвет канала: из данных (icon/color), затем по известному id, затем по порядку из палитры. */
 function channelStyle(id: string, def?: ChannelDef, index = 0): { icon: LucideIcon; color: string } {
@@ -664,7 +780,7 @@ const TONE: Record<Tone, string> = {
   positive: "bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-400/20",
   negative: "bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-400/20",
   warning: "bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-400/20",
-  info: "bg-indigo-50 text-indigo-700 ring-indigo-600/20 dark:bg-indigo-500/10 dark:text-indigo-300 dark:ring-indigo-400/20",
+  info: "bg-blue-50 text-blue-700 ring-blue-600/20 dark:bg-blue-500/10 dark:text-blue-300 dark:ring-blue-400/20",
   neutral: "bg-zinc-100 text-zinc-600 ring-zinc-500/20 dark:bg-zinc-800 dark:text-zinc-400 dark:ring-zinc-400/20",
 };
 
@@ -709,7 +825,7 @@ function Segmented<T extends string>({ value, options, onChange, label }: { valu
           className={cx(
             "rounded-md px-3 py-1.5 text-xs font-medium transition-all duration-150",
             value === o.key
-              ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100"
+              ? "bg-white text-zinc-900 shadow-sm dark:bg-gradient-to-b dark:from-[#ff8a2e] dark:to-[#f06400] dark:text-white dark:shadow-[0_4px_16px_rgba(255,122,26,.35)]"
               : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
           )}
         >
@@ -744,7 +860,7 @@ function DataStatus({ meta, nowMs }: { meta: DashboardData["meta"]; nowMs: numbe
   if (meta.source === "mock") {
     return (
       <Badge tone="info">
-        <span className="size-1.5 rounded-full bg-indigo-500" aria-hidden />
+        <span className="size-1.5 rounded-full bg-blue-500" aria-hidden />
         Демо-данные
       </Badge>
     );
@@ -780,7 +896,7 @@ function KpiCard({ icon: Icon, label, value, delta, hint, accent }: { icon: Luci
             <Icon className="size-3.5" aria-hidden />
           </span>
         </div>
-        <p className="mt-3 text-2xl font-semibold tracking-tight text-zinc-900 tabular-nums dark:text-zinc-50">{value}</p>
+        <p className="mt-3 text-2xl font-extrabold tracking-tight text-zinc-900 tabular-nums dark:text-white" style={DISPLAY_FONT}>{value}</p>
         <div className="mt-2 flex min-h-5 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
           {delta}
           {hint}
@@ -792,7 +908,7 @@ function KpiCard({ icon: Icon, label, value, delta, hint, accent }: { icon: Luci
 
 // ── Воронка ────────────────────────────────────────────────────────────────────────
 
-const FUNNEL_COLORS = ["#a5b4fc", COLORS.indigo, "#4f46e5", "#3b82f6", COLORS.emerald];
+const FUNNEL_COLORS = ["#93c5fd", "#60a5fa", "#3b82f6", "#2563eb", COLORS.orange];
 
 interface FunnelTooltipProps {
   active?: boolean;
@@ -913,7 +1029,15 @@ function FunnelSection({ steps, hasPrev }: { steps: FunnelStep[]; hasPrev: boole
 
 type SortKey = "label" | "leads" | "c1" | "revenue" | "romi";
 
-function ChannelsTable({ rows, currency, selected, defs }: { rows: ChannelRow[]; currency: CurrencyCode; selected: ChannelId | "all"; defs: ChannelDef[] }) {
+function ChannelsTable({ rows, currency, selected, defs, sources }: { rows: ChannelRow[]; currency: CurrencyCode; selected: ChannelId | "all"; defs: ChannelDef[]; sources: Map<ChannelId, SourceRow[]> }) {
+  const [open, setOpen] = useState<Set<ChannelId>>(() => new Set(["other"]));
+  const toggle = (id: ChannelId) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "leads", dir: -1 });
   const sorted = useMemo(() => {
     const val = (r: ChannelRow): number | string => (sort.key === "label" ? r.label : r[sort.key] ?? -Infinity);
@@ -948,7 +1072,7 @@ function ChannelsTable({ rows, currency, selected, defs }: { rows: ChannelRow[];
 
   return (
     <Card className="flex min-w-0 flex-col lg:col-span-3">
-      <CardHeader icon={Layers} title="Каналы и конверсии" description="C1: из охвата в лид. ROMI: (выручка − расходы) / расходы за период." />
+      <CardHeader icon={Layers} title="Каналы и конверсии" description="Нажмите на канал, чтобы увидеть, из каких источников CRM он состоит. C1: из охвата в лид. ROMI: (выручка − расходы) / расходы." />
       <CardContent className="overflow-x-auto px-2 pb-3">
         <table className="w-full min-w-[540px] text-sm">
           <thead className="text-xs text-zinc-500 dark:text-zinc-400">
@@ -965,13 +1089,17 @@ function ChannelsTable({ rows, currency, selected, defs }: { rows: ChannelRow[];
               const defIndex = defs.findIndex((d) => d.id === r.id);
               const st = channelStyle(r.id, defs[defIndex], Math.max(0, defIndex));
               const Icon = st.icon;
+              const srcRows = sources.get(r.id) ?? [];
+              const isOpen = open.has(r.id);
               return (
+                <Fragment key={r.id}>
                 <tr
-                  key={r.id}
+                  onClick={() => srcRows.length && toggle(r.id)}
                   aria-selected={selected === r.id}
                   className={cx(
                     "border-b border-zinc-100 transition-colors last:border-0 hover:bg-zinc-50 dark:border-zinc-800/70 dark:hover:bg-zinc-800/40",
-                    selected === r.id && "bg-indigo-50/60 dark:bg-indigo-500/10",
+                    srcRows.length > 0 && "cursor-pointer",
+                    selected === r.id && "bg-blue-50/60 dark:bg-blue-500/10",
                     selected !== "all" && selected !== r.id && "opacity-50",
                   )}
                 >
@@ -981,7 +1109,12 @@ function ChannelsTable({ rows, currency, selected, defs }: { rows: ChannelRow[];
                         <Icon className="size-3.5" aria-hidden />
                       </span>
                       <div className="min-w-0">
-                        <p className="truncate font-medium text-zinc-800 dark:text-zinc-200">{r.label}</p>
+                        <p className="flex items-center gap-1.5 truncate font-medium text-zinc-800 dark:text-zinc-100">
+                          {r.label}
+                          {srcRows.length > 0 && (
+                            <ChevronDown className={cx("size-3.5 shrink-0 text-zinc-400 transition-transform", isOpen && "rotate-180")} aria-hidden />
+                          )}
+                        </p>
                         <p className="text-xs text-zinc-500 dark:text-zinc-400">
                           {fmtInt(r.paid)} {plural(r.paid, "оплата", "оплаты", "оплат")} · CR {fmtPct(r.crPaid)}
                         </p>
@@ -1004,6 +1137,22 @@ function ChannelsTable({ rows, currency, selected, defs }: { rows: ChannelRow[];
                     )}
                   </td>
                 </tr>
+                {isOpen &&
+                  srcRows.map((sr) => (
+                    <tr key={r.id + sr.source} className="border-b border-zinc-100 bg-zinc-50/60 text-xs dark:border-zinc-800/60 dark:bg-zinc-900/40">
+                      <td className="py-2 pl-12 pr-2.5 text-zinc-600 dark:text-zinc-300">
+                        <span className="inline-flex items-center gap-2">
+                          <span className="size-1.5 rounded-full" style={{ background: st.color }} aria-hidden />
+                          {sr.source}
+                        </span>
+                      </td>
+                      <td className="px-2.5 py-2 text-right tabular-nums text-zinc-700 dark:text-zinc-200">{fmtInt(sr.leads)}</td>
+                      <td className="px-2.5 py-2 text-right text-zinc-500 dark:text-zinc-400" colSpan={3}>
+                        {fmtInt(sr.paid)} {plural(sr.paid, "оплата", "оплаты", "оплат")} · брак {fmtInt(sr.lost)} · CR {fmtPct(sr.leads ? sr.paid / sr.leads : 0)}
+                      </td>
+                    </tr>
+                  ))}
+                </Fragment>
               );
             })}
           </tbody>
@@ -1058,8 +1207,8 @@ function AreaTooltip({ active, payload, currency, bucket }: AreaTooltipProps) {
   const cr = p.leads ? p.paid / p.leads : null;
   return (
     <TooltipShell title={bucket === "week" ? `Неделя с ${p.label}` : p.label}>
-      <TooltipRow color={COLORS.indigo} label="Новые лиды" value={fmtInt(p.leads)} />
-      <TooltipRow color={COLORS.emerald} label="Оплаты" value={fmtInt(p.paid)} />
+      <TooltipRow color={COLORS.blue} label="Новые лиды" value={fmtInt(p.leads)} />
+      <TooltipRow color={COLORS.orange} label="Оплаты" value={fmtInt(p.paid)} />
       <TooltipRow label="Выручка" value={fmtMoney(p.revenue, currency)} />
       {cr !== null && (
         <div className="pt-1">
@@ -1074,29 +1223,29 @@ function TrendChart({ series, currency, bucket, dark }: { series: SeriesPoint[];
   const grid = dark ? "#27272a" : "#f4f4f5";
   const axis = dark ? "#71717a" : "#a1a1aa";
   return (
-    <Card className="flex min-w-0 flex-col lg:col-span-2">
+    <Card className="flex min-w-0 flex-col">
       <CardHeader
         icon={TrendingUp}
         title="Динамика: лиды и оплаты"
         description={bucket === "week" ? "По неделям. Лиды по дате входа, оплаты по дате оплаты." : "По дням. Лиды по дате входа, оплаты по дате оплаты."}
         action={
           <div className="flex items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400">
-            <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full" style={{ background: COLORS.indigo }} />Лиды</span>
-            <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full" style={{ background: COLORS.emerald }} />Оплаты</span>
+            <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full" style={{ background: COLORS.blue }} />Лиды</span>
+            <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full" style={{ background: COLORS.orange }} />Оплаты</span>
           </div>
         }
       />
-      <CardContent className="h-72 min-h-72 pl-1 lg:h-auto lg:flex-1">
+      <CardContent className="h-80 min-h-72 pl-1">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={series} margin={{ top: 8, right: 12, left: -12, bottom: 0 }}>
             <defs>
               <linearGradient id="gLeads" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={COLORS.indigo} stopOpacity={0.32} />
-                <stop offset="95%" stopColor={COLORS.indigo} stopOpacity={0} />
+                <stop offset="0%" stopColor={COLORS.blue} stopOpacity={0.32} />
+                <stop offset="95%" stopColor={COLORS.blue} stopOpacity={0} />
               </linearGradient>
               <linearGradient id="gPaid" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={COLORS.emerald} stopOpacity={0.35} />
-                <stop offset="95%" stopColor={COLORS.emerald} stopOpacity={0} />
+                <stop offset="0%" stopColor={COLORS.orange} stopOpacity={0.4} />
+                <stop offset="95%" stopColor={COLORS.orange} stopOpacity={0} />
               </linearGradient>
             </defs>
             <CartesianGrid stroke={grid} vertical={false} />
@@ -1106,8 +1255,8 @@ function TrendChart({ series, currency, bucket, dark }: { series: SeriesPoint[];
               content={(p) => <AreaTooltip {...(p as unknown as AreaTooltipProps)} currency={currency} bucket={bucket} />}
               cursor={{ stroke: axis, strokeDasharray: "3 3" }}
             />
-            <Area type="monotone" dataKey="leads" name="Лиды" stroke={COLORS.indigo} strokeWidth={2} fill="url(#gLeads)" activeDot={{ r: 4, strokeWidth: 0 }} />
-            <Area type="monotone" dataKey="paid" name="Оплаты" stroke={COLORS.emerald} strokeWidth={2} fill="url(#gPaid)" activeDot={{ r: 4, strokeWidth: 0 }} />
+            <Area type="monotone" dataKey="leads" name="Лиды" stroke={COLORS.blue} strokeWidth={2} fill="url(#gLeads)" activeDot={{ r: 4, strokeWidth: 0 }} />
+            <Area type="monotone" dataKey="paid" name="Оплаты" stroke={COLORS.orange} strokeWidth={2} fill="url(#gPaid)" activeDot={{ r: 4, strokeWidth: 0 }} />
           </AreaChart>
         </ResponsiveContainer>
       </CardContent>
@@ -1117,6 +1266,150 @@ function TrendChart({ series, currency, bucket, dark }: { series: SeriesPoint[];
 
 function EmptyState({ text }: { text: string }) {
   return <div className="flex h-full items-center justify-center text-sm text-zinc-400">{text}</div>;
+}
+
+// ── Стадии CRM ─────────────────────────────────────────────────────────────────────
+
+const SEMANTIC_GROUPS: { key: string; label: string; tone: Tone }[] = [
+  { key: "P", label: "В работе", tone: "info" },
+  { key: "S", label: "Успех", tone: "positive" },
+  { key: "F", label: "Брак и отказы", tone: "negative" },
+];
+
+function StagesCard({ stages, currency }: { stages: StageCount[]; currency: CurrencyCode }) {
+  const max = Math.max(1, ...stages.map((s) => s.count));
+  return (
+    <Card className="flex min-w-0 flex-col lg:col-span-2">
+      <CardHeader icon={ListChecks} title="Лиды по стадиям" description="Где сейчас лиды, пришедшие в выбранный период. Цвета как в Bitrix24." />
+      <CardContent className="space-y-4">
+        {SEMANTIC_GROUPS.map((g) => {
+          const items = stages.filter((s) => (s.semantics === "S" || s.semantics === "F" ? s.semantics : "P") === g.key);
+          if (!items.length) return null;
+          const total = items.reduce((a, s) => a + s.count, 0);
+          return (
+            <div key={g.key}>
+              <div className="mb-2 flex items-center justify-between">
+                <Badge tone={g.tone}>{g.label}</Badge>
+                <span className="text-xs tabular-nums text-zinc-500 dark:text-zinc-400">{fmtInt(total)}</span>
+              </div>
+              <ul className="space-y-2">
+                {items.map((s) => (
+                  <li key={s.id} className="group">
+                    <div className="flex items-baseline justify-between gap-3 text-sm">
+                      <span className="min-w-0 truncate text-zinc-700 dark:text-zinc-200">{s.name}</span>
+                      <span className="shrink-0 tabular-nums">
+                        <span className="font-semibold text-zinc-900 dark:text-white">{fmtInt(s.count)}</span>
+                        <span className="ml-1.5 text-xs text-zinc-400">{fmtPct(s.share, 0)}</span>
+                      </span>
+                    </div>
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+                      <div
+                        className="h-full rounded-full transition-all duration-500"
+                        style={{ width: `${s.count ? Math.max(2, (s.count / max) * 100) : 0}%`, background: s.color ?? COLORS.blue }}
+                      />
+                    </div>
+                    {s.amount > 0 && s.count > 0 && (
+                      <p className="mt-0.5 hidden text-[11px] text-zinc-400 group-hover:block">сумма лидов {fmtMoney(s.amount, currency)}</p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Свежие лиды ────────────────────────────────────────────────────────────────────
+
+function RecentLeads({
+  events, statuses, defs, currency, portalUrl, from, to,
+}: {
+  events: LeadEvent[]; statuses: StatusDef[]; defs: ChannelDef[]; currency: CurrencyCode; portalUrl?: string | null; from: number; to: number;
+}) {
+  const [limit, setLimit] = useState(12);
+  const list = useMemo(
+    () => events.filter((e) => inRange(e.createdAt, from, to)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    [events, from, to],
+  );
+  const statusById = useMemo(() => new Map(statuses.map((s) => [s.id, s])), [statuses]);
+  const labelOf = (id: ChannelId) => defs.find((d) => d.id === id)?.label ?? (id === "other" ? "Другие источники" : id);
+  const dt = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+  return (
+    <Card>
+      <CardHeader
+        icon={Users}
+        title="Свежие лиды"
+        description="Номер лида ведёт в карточку Bitrix24. Имена и контакты здесь не хранятся."
+        action={<Badge tone="neutral">{fmtInt(list.length)} за период</Badge>}
+      />
+      <CardContent className="overflow-x-auto px-2 pb-3">
+        <table className="w-full min-w-[640px] text-sm">
+          <thead className="text-xs text-zinc-500 dark:text-zinc-400">
+            <tr className="border-b border-zinc-200 dark:border-zinc-800">
+              <th className="px-2.5 py-2 text-left font-medium">Лид</th>
+              <th className="px-2.5 py-2 text-left font-medium">Создан</th>
+              <th className="px-2.5 py-2 text-left font-medium">Канал / источник</th>
+              <th className="px-2.5 py-2 text-left font-medium">Стадия</th>
+              <th className="px-2.5 py-2 text-right font-medium">Сумма</th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.slice(0, limit).map((e) => {
+              const st = e.status ? statusById.get(e.status) : undefined;
+              return (
+                <tr key={e.id} className="border-b border-zinc-100 transition-colors last:border-0 hover:bg-zinc-50 dark:border-zinc-800/70 dark:hover:bg-zinc-800/40">
+                  <td className="px-2.5 py-2.5 font-medium tabular-nums">
+                    {portalUrl ? (
+                      <a
+                        href={`${portalUrl}/crm/lead/details/${encodeURIComponent(e.id)}/`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-blue-600 hover:underline dark:text-[#ff9a4d]"
+                      >
+                        #{e.id}
+                        <ExternalLink className="size-3" aria-hidden />
+                      </a>
+                    ) : (
+                      <span className="text-zinc-700 dark:text-zinc-200">#{e.id}</span>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap px-2.5 py-2.5 text-zinc-600 dark:text-zinc-300">{dt.format(new Date(ts(e.createdAt)))}</td>
+                  <td className="px-2.5 py-2.5">
+                    <p className="text-zinc-800 dark:text-zinc-100">{labelOf(e.channel)}</p>
+                    {e.source && e.source !== labelOf(e.channel) && <p className="text-xs text-zinc-500 dark:text-zinc-400">{e.source}</p>}
+                  </td>
+                  <td className="px-2.5 py-2.5">
+                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-zinc-100 px-2 py-0.5 text-xs text-zinc-700 dark:bg-zinc-800 dark:text-zinc-100">
+                      <span className="size-2 rounded-full" style={{ background: st?.color ?? COLORS.blue }} aria-hidden />
+                      {st?.name ?? e.status ?? e.stage}
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap px-2.5 py-2.5 text-right tabular-nums text-zinc-800 dark:text-zinc-100">
+                    {e.amount ? fmtMoney(e.amount, currency) : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {list.length > limit && (
+          <div className="flex justify-center pt-3">
+            <button
+              type="button"
+              onClick={() => setLimit((l) => l + 24)}
+              className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Показать ещё
+            </button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 // ── Тема ───────────────────────────────────────────────────────────────────────────
@@ -1130,7 +1423,7 @@ function useTheme(): [boolean, () => void] {
     } catch {
       /* localStorage недоступен */
     }
-    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
+    return true; // фирменная тёмная тема по умолчанию
   });
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -1158,6 +1451,8 @@ export interface MarketingFunnelDashboardProps {
   /** Вызывается при 401 от API */
   onAuthError?: () => void;
   title?: string;
+  /** Подпись бренда над заголовком */
+  brand?: string;
 }
 
 export default function MarketingFunnelDashboard({
@@ -1167,6 +1462,7 @@ export default function MarketingFunnelDashboard({
   refreshIntervalMs = 5 * 60_000,
   onAuthError,
   title = "Воронка продаж и каналы",
+  brand = "ФОРАЙТИ · аналитика лидов",
 }: MarketingFunnelDashboardProps) {
   const [period, setPeriod] = useState<PeriodKey>("30d");
   const [channel, setChannel] = useState<ChannelId | "all">("all");
@@ -1199,6 +1495,9 @@ export default function MarketingFunnelDashboard({
       funnel: computeFunnel(events, daily, range.from, range.to),
       channels: computeChannels(data.rawEvents, data.channelDaily, data.channels, range.from, range.to),
       series: computeSeries(events, range.from, range.to, range.bucket),
+      sources: computeSourcesByChannel(data.rawEvents, range.from, range.to),
+      stages: computeStageCounts(events, data.statuses ?? [], range.from, range.to),
+      events,
     };
   }, [data, period, channel]);
 
@@ -1207,12 +1506,19 @@ export default function MarketingFunnelDashboard({
   const vsLabel = period === "all" ? null : "vs прошлый период";
 
   return (
-    <div className="min-h-screen bg-zinc-50 text-zinc-900 antialiased transition-colors dark:bg-zinc-950 dark:text-zinc-100">
+    <div className="mfd-root min-h-screen bg-zinc-50 text-zinc-900 antialiased transition-colors dark:bg-zinc-950 dark:text-zinc-100">
+      <style>{BRAND_CSS}</style>
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
         {/* Header & Controls */}
         <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="min-w-0">
-            <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{title}</h1>
+            <p className="mb-1.5 inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.18em] text-[#f06400] dark:text-[#ff8a2e]" style={DISPLAY_FONT}>
+              <Cog className="size-3.5" aria-hidden />
+              {brand}
+            </p>
+            <h1 className="text-2xl font-extrabold tracking-tight text-zinc-900 sm:text-3xl dark:text-white" style={DISPLAY_FONT}>
+              {title}
+            </h1>
             <div className="mt-1.5">{data ? <DataStatus meta={data.meta} nowMs={nowMs} /> : <Skeleton className="h-4 w-48" />}</div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1222,7 +1528,7 @@ export default function MarketingFunnelDashboard({
               <select
                 value={channel}
                 onChange={(e) => setChannel(e.target.value)}
-                className="h-8 appearance-none rounded-lg border border-zinc-200 bg-white pl-3 pr-8 text-xs font-medium text-zinc-700 shadow-sm outline-none transition-colors hover:bg-zinc-50 focus:ring-2 focus:ring-indigo-500/30 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                className="h-8 appearance-none rounded-lg border border-zinc-200 bg-white pl-3 pr-8 text-xs font-medium text-zinc-700 shadow-sm outline-none transition-colors hover:bg-zinc-50 focus:ring-2 focus:ring-blue-500/30 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
               >
                 <option value="all">Все каналы</option>
                 {channelOptions.map((c) => (
@@ -1271,7 +1577,7 @@ export default function MarketingFunnelDashboard({
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <KpiCard
                 icon={Users}
-                accent={COLORS.indigo}
+                accent={COLORS.blue}
                 label="Всего лидов · C1"
                 value={fmtInt(view.kpi.leads)}
                 delta={<DeltaBadge delta={view.deltas.leads} />}
@@ -1310,9 +1616,21 @@ export default function MarketingFunnelDashboard({
             <FunnelSection steps={view.funnel} hasPrev={view.prev !== null} />
 
             <div className="grid gap-4 lg:grid-cols-5">
-              <ChannelsTable rows={view.channels} currency={currency} selected={channel} defs={data?.channels ?? []} />
-              <TrendChart series={view.series} currency={currency} bucket={view.range.bucket} dark={dark} />
+              <ChannelsTable rows={view.channels} currency={currency} selected={channel} defs={data?.channels ?? []} sources={view.sources} />
+              <StagesCard stages={view.stages} currency={currency} />
             </div>
+
+            <TrendChart series={view.series} currency={currency} bucket={view.range.bucket} dark={dark} />
+
+            <RecentLeads
+              events={view.events}
+              statuses={data?.statuses ?? []}
+              defs={data?.channels ?? []}
+              currency={currency}
+              portalUrl={data?.meta.portalUrl}
+              from={view.range.from}
+              to={view.range.to}
+            />
 
             <footer className="flex flex-wrap items-center justify-between gap-2 pt-2 text-xs text-zinc-400 dark:text-zinc-500">
               <span>
