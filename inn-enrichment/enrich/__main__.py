@@ -15,6 +15,8 @@ def main(argv=None):
     ap.add_argument("input", help="CSV или XLSX с колонкой «ИНН»")
     ap.add_argument("-o", "--output", help="куда сохранить (.xlsx или .csv), по умолчанию <имя>_enriched.xlsx")
     ap.add_argument("--no-site", action="store_true", help="не ходить на сайты, только DaData")
+    ap.add_argument("--no-search", action="store_true",
+                    help="не искать сайт в поисковике, проверять только сайт из файла или из почты DaData")
     ap.add_argument("--workers", type=int, default=8, help="параллельных потоков (по умолчанию 8)")
     ap.add_argument("--cache", default=str(ROOT / "var" / "cache.sqlite"), help="файл кэша")
     ap.add_argument("--no-cache", action="store_true", help="не использовать кэш")
@@ -25,12 +27,15 @@ def main(argv=None):
     out = Path(args.output) if args.output else src.with_name(src.stem + "_enriched.xlsx")
 
     try:
-        enricher = build_enricher(not args.no_site, None if args.no_cache else args.cache, args.cache_days)
+        enricher = build_enricher(not args.no_site, None if args.no_cache else args.cache, args.cache_days,
+                                  use_search=not args.no_search)
         headers, rows = read_table(src)
     except (DaDataError, ValueError, OSError) as e:
         print(f"Ошибка: {e}", file=sys.stderr)
         return 1
 
+    if not enricher.dadata:
+        print("DADATA_API_KEY не задан: контакты ищутся только на сайтах компаний", file=sys.stderr)
     started = time.time()
 
     def progress(n, total):

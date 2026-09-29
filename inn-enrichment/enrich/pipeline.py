@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from .contacts import (classify_email, email_domain, format_phone, is_mobile, is_public_domain,
                        normalize_email, normalize_phone)
 from .dadata import DaDataError, parse_party
+from .search import SearchError, candidate_domains
 
 NEW_COLUMNS = [
     "Статус (DaData)",
@@ -78,10 +79,13 @@ def find_column(headers, *names):
 
 
 class Enricher:
-    def __init__(self, dadata, scraper=None, cache=None):
+    def __init__(self, dadata=None, scraper=None, cache=None, search=None):
         self.dadata = dadata
         self.scraper = scraper
         self.cache = cache
+        self.search = search
+        # без DaData её колонки всегда пустые, в результат их не добавляем
+        self.columns = NEW_COLUMNS if dadata else [c for c in NEW_COLUMNS if "DaData" not in c]
 
     def party(self, inn, kpp):
         key = f"dadata:{inn}:{kpp or ''}"
@@ -103,7 +107,34 @@ class Enricher:
                 self.cache.set(key, cached)
         return cached
 
-    def enrich(self, inn_raw, kpp_raw=None, site_hint=None, known_people=()):
+    def find_site(self, inn, name=None, skip=()):
+        """Ищет сайт в поисковике и берёт первый, на котором указан этот ИНН."""
+        key = f"search:{inn}"
+        cached = self.cache.get(key) if self.cache else None
+        if cached is not None:
+            return cached or None
+        queries = [f'"{inn}"']
+        if name:
+            queries.append(f"{_clean_name(name)} ИНН {inn}")
+        tried, found = set(skip), ""
+        for q in queries:
+            for domain in candidate_domains(self.search.search(q)):
+                if domain in tried:
+                    continue
+                tried.add(domain)
+                data = self.site(domain, inn)
+                if data.get("site") and data.get("inn_found"):
+                    found = domain
+                    break
+                if len(tried) >= 6:
+                    break
+            if found or len(tried) >= 6:
+                break
+        if self.cache:
+            self.cache.set(key, found)
+        return found or None
+
+    def enrich(self, inn_raw, kpp_raw=None, site_hint=None, known_people=(), name=None):
         out = dict.fromkeys(NEW_COLUMNS, "")
         inn = normalize_inn(inn_raw)
         if not inn:
@@ -117,13 +148,16 @@ class Enricher:
         notes, sources = [], []
         phones, emails, people = [], [], [p for p in known_people if p]
 
-        try:
-            party = self.party(inn, kpp)
-        except DaDataError as e:
-            if e.fatal:
-                raise
-            party = None
-            notes.append(f"DaData: {e}")
+        party = None
+        if self.dadata:
+            try:
+                party = self.party(inn, kpp)
+            except DaDataError as e:
+                if e.fatal:
+                    raise
+                notes.append(f"DaData: {e}")
+            if not party and not notes:
+                notes.append("DaData не нашла ИНН")
         if party:
             out["Статус (DaData)"] = party["status"]
             if party["director"]:
@@ -138,27 +172,40 @@ class Enricher:
                 sources.append("DaData")
             if party["status"] and party["status"] != "действует":
                 notes.append(f"компания: {party['status']}")
-        elif not notes:
-            notes.append("DaData не нашла ИНН")
+            name = name or party["name"]
 
         if self.scraper:
             domains = _site_candidates(site_hint, [e for e, _ in emails])
+            found, search_error = None, None
             for domain in domains:
                 data = self.site(domain, inn)
-                if not data.get("site"):
-                    continue
+                if data.get("site"):
+                    found = (domain, data, False)
+                    break
+            if (not found or not found[1]["inn_found"]) and self.search:
+                try:
+                    domain = self.find_site(inn, name, skip=domains)
+                except SearchError as e:
+                    domain = None
+                    search_error = str(e)
+                if domain:
+                    found = (domain, self.site(domain, inn), True)
+            if found:
+                domain, data, by_search = found
                 out["Сайт"] = data["site"]
                 out["ИНН на сайте"] = "да" if data["inn_found"] else "нет"
                 phones += [(p, "сайт") for p in data["phones"]]
                 emails += [(e, "сайт") for e in data["emails"]]
                 out["Мессенджеры и соцсети"] = ", ".join(data["messengers"][:10])
-                sources.append("сайт")
+                sources.append("сайт (найден поиском)" if by_search else "сайт")
                 if not data["inn_found"]:
                     notes.append("ИНН на сайте не найден, проверьте, что сайт этой компании")
-                break
-            else:
-                if domains:
-                    notes.append(f"сайт не открылся: {', '.join(domains)}")
+            elif domains:
+                notes.append(f"сайт не открылся: {', '.join(domains)}")
+            elif search_error:
+                notes.append(f"поиск: {search_error}, повторите прогон позже")
+            elif self.search:
+                notes.append("сайт с этим ИНН в поиске не найден")
 
         surnames = [p.split()[0] for p in people if p.split()]
         mobiles = _uniq(p for p, _ in phones if is_mobile(p))
@@ -178,6 +225,13 @@ class Enricher:
             notes.append("контакты не найдены")
         out["Комментарий"] = "; ".join(notes)
         return out
+
+
+def _clean_name(name):
+    """ООО "РОМАШКА" -> РОМАШКА: форма собственности в поиске только мешает."""
+    s = re.sub(r"[\"«»“”']", " ", str(name))
+    s = re.sub(r"^\s*(ООО|ОАО|ЗАО|ПАО|АО|ИП|НКО|АНО|ФГУП|МУП|ГУП)\s+", "", s.strip(), flags=re.I)
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def _site_candidates(site_hint, emails):
@@ -227,7 +281,8 @@ def enrich_table(headers, rows, enricher, workers=8, progress=None):
         if inn and len(inn) == 12 and cell(row, name_i):
             people.append(re.sub(r"^ИП\s+", "", str(cell(row, name_i)).strip(), flags=re.I))
         try:
-            return enricher.enrich(cell(row, inn_i), cell(row, kpp_i), cell(row, site_i), people)
+            return enricher.enrich(cell(row, inn_i), cell(row, kpp_i), cell(row, site_i), people,
+                                   name=cell(row, name_i))
         except DaDataError as e:
             if e.fatal:
                 raise
@@ -246,12 +301,13 @@ def enrich_table(headers, rows, enricher, workers=8, progress=None):
             if progress:
                 progress(n, len(rows))
 
-    extra = [c for c in NEW_COLUMNS if c not in headers]
+    columns = getattr(enricher, "columns", NEW_COLUMNS)
+    extra = [c for c in columns if c not in headers]
     new_headers = list(headers) + extra
     new_rows = []
     for row, res in zip(rows, results):
         row = list(row) + [None] * (len(headers) - len(row))
-        for c in NEW_COLUMNS:
+        for c in columns:
             if c in headers:  # повторный прогон уже обогащённого файла: перезаписываем
                 row[headers.index(c)] = res[c]
         new_rows.append(row + [res[c] for c in extra])

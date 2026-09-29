@@ -111,3 +111,59 @@ def test_fatal_dadata_error_stops_run():
 
     with pytest.raises(DaDataError):
         enrich_table(["ИНН"], [["7707083893"]], Enricher(Broken()), workers=1)
+
+
+class FakeSearch:
+    def __init__(self, urls):
+        self.urls = urls
+        self.queries = []
+
+    def search(self, query):
+        self.queries.append(query)
+        return self.urls
+
+
+def test_without_dadata_site_found_by_search(site, tmp_path):
+    # первым в выдаче агрегатор и чужой сайт без ИНН: их надо пропустить
+    search = FakeSearch(["https://www.rusprofile.ru/id/1", site])
+    e = Enricher(None, SiteScraper(timeout=5), Cache(str(tmp_path / "c.sqlite")), search)
+    out = e.enrich("7707083893", name='ООО "ФИРМА"')
+    assert "Статус (DaData)" not in e.columns
+    assert out["Сайт"] == site.rstrip("/")
+    assert out["Источники"] == "сайт (найден поиском)"
+    assert out["Основной телефон"] == "+7 917 123-45-67"
+    assert out["Email общие"] == "info@firma.test"
+    assert search.queries == ['"7707083893"']
+    e.enrich("7707083893", name='ООО "ФИРМА"')
+    assert len(search.queries) == 1  # второй раз из кэша
+
+
+def test_search_rejects_site_without_inn(site):
+    e = Enricher(None, SiteScraper(timeout=5), None, FakeSearch([site]))
+    out = e.enrich("500100732259", name="ИП Петров Петр")  # на тестовом сайте другой ИНН
+    assert out["Сайт"] == ""
+    assert out["Комментарий"] == "сайт с этим ИНН в поиске не найден"
+
+
+def test_table_without_dadata(site, tmp_path):
+    e = Enricher(None, SiteScraper(timeout=5), None, FakeSearch([site]))
+    headers, rows = enrich_table(["Название (ФИО)", "ИНН"], [["ООО Фирма", "7707083893"]], e, workers=1)
+    assert "Руководитель (DaData)" not in headers
+    assert rows[0][headers.index("Сайт")] == site.rstrip("/")
+
+
+def test_search_blocked_is_not_cached(tmp_path):
+    from enrich.search import SearchError
+
+    class Blocked:
+        calls = 0
+
+        def search(self, query):
+            Blocked.calls += 1
+            raise SearchError("поисковики недоступны или просят капчу")
+
+    e = Enricher(None, SiteScraper(timeout=5), Cache(str(tmp_path / "c.sqlite")), Blocked())
+    out = e.enrich("7707083893")
+    assert out["Комментарий"].startswith("поиск: поисковики недоступны")
+    e.enrich("7707083893")
+    assert Blocked.calls == 2
