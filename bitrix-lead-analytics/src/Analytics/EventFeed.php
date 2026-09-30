@@ -118,10 +118,14 @@ final class EventFeed
             );
             foreach ($rows as $r) {
                 $lid = (int) $r['lead_id'];
-                $dl = $dealsByLead[$lid] ?? ['count' => 0, 'lost' => 0, 'won' => 0, 'sum' => 0.0, 'wonAt' => null];
+                $dl = $dealsByLead[$lid] ?? ['count' => 0, 'lost' => 0, 'won' => 0, 'sum' => 0.0, 'open' => 0.0, 'wonAt' => null];
                 $dl['count']++;
                 if ($r['semantics'] === 'F') {
                     $dl['lost']++;
+                } elseif ($r['semantics'] === 'P') {
+                    if (($r['currency_id'] ?: 'RUB') === $currency) {
+                        $dl['open'] += (float) $r['opportunity'];
+                    }
                 } elseif ($r['semantics'] === 'S') {
                     $dl['won']++;
                     if (($r['currency_id'] ?: 'RUB') === $currency) {
@@ -182,6 +186,8 @@ final class EventFeed
                 'stage' => $stage,
                 'lost' => $lost,
                 'revenue' => $revenue,
+                // Сумма открытых (ещё не выигранных и не проигранных) сделок лида.
+                'pipeline' => (float) ($dealsByLead[$id]['open'] ?? 0.0),
                 'sqlAt' => $stage !== 'lead' ? $iso($m['sql_at'] ?? null) : null,
                 'consultAt' => in_array($stage, ['consult', 'paid'], true) ? $iso($m['consult_at'] ?? $m['paid_at'] ?? null) : null,
                 'paidAt' => $stage === 'paid' ? $iso($paidAtUtc ?? $m['paid_at'] ?? null) : null,

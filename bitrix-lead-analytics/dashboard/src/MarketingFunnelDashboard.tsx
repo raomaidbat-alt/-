@@ -80,6 +80,8 @@ export interface LeadEvent {
   lost: boolean;
   /** Сумма оплаты в основной валюте (0, если не оплачен) */
   revenue: number;
+  /** Сумма открытых сделок лида в основной валюте (деньги "в работе") */
+  pipeline?: number;
   sqlAt: string | null;
   consultAt: string | null;
   paidAt: string | null;
@@ -275,6 +277,7 @@ export function generateMockDashboardData(now: Date = new Date(), seed = 2026092
           stage,
           lost,
           revenue: stage === "paid" ? amount : 0,
+          pipeline: stage === "consult" && !lost ? amount : 0,
           sqlAt: sqlAt && toLocalIso(sqlAt),
           consultAt: consultAt && toLocalIso(consultAt),
           paidAt: paidAt && toLocalIso(paidAt),
@@ -542,6 +545,8 @@ export interface ChannelRow {
   payments: number;
   crPaid: number;
   revenue: number;
+  /** Сумма открытых сделок от лидов, пришедших в период */
+  pipeline: number;
   spend: number;
   romi: number | null;
 }
@@ -556,7 +561,7 @@ export function computeChannels(
   const fromKey = toLocalIso(new Date(from)).slice(0, 10);
   const toKey = toLocalIso(new Date(to)).slice(0, 10);
   const rows = new Map<ChannelId, ChannelRow>(
-    channels.map((c) => [c.id, { id: c.id, label: c.label, leads: 0, reach: 0, c1: null, sql: 0, paid: 0, payments: 0, crPaid: 0, revenue: 0, spend: 0, romi: null }]),
+    channels.map((c) => [c.id, { id: c.id, label: c.label, leads: 0, reach: 0, c1: null, sql: 0, paid: 0, payments: 0, crPaid: 0, revenue: 0, pipeline: 0, spend: 0, romi: null }]),
   );
   for (const e of events) {
     const row = rows.get(e.channel);
@@ -565,6 +570,7 @@ export function computeChannels(
       row.leads++;
       if (reached(e, "sql")) row.sql++;
       if (e.stage === "paid") row.paid++;
+      if (!e.lost) row.pipeline += e.pipeline ?? 0;
     }
     if (e.stage === "paid" && inRange(e.paidAt ?? e.createdAt, from, to)) {
       row.revenue += e.revenue;
@@ -1486,8 +1492,8 @@ function SpendCard({
   const mfmt = new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric" });
 
   const total = shown.reduce(
-    (a, r) => ({ spend: a.spend + r.spend, leads: a.leads + r.leads, sql: a.sql + r.sql, paid: a.paid + r.payments, revenue: a.revenue + r.revenue }),
-    { spend: 0, leads: 0, sql: 0, paid: 0, revenue: 0 },
+    (a, r) => ({ spend: a.spend + r.spend, leads: a.leads + r.leads, sql: a.sql + r.sql, paid: a.paid + r.payments, revenue: a.revenue + r.revenue, pipeline: a.pipeline + r.pipeline }),
+    { spend: 0, leads: 0, sql: 0, paid: 0, revenue: 0, pipeline: 0 },
   );
 
   const submit = async (ev: FormEvent) => {
@@ -1596,7 +1602,7 @@ function SpendCard({
         )}
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[980px] text-sm">
+          <table className="w-full min-w-[1080px] text-sm">
             <thead className="text-xs text-zinc-500 dark:text-zinc-400">
               <tr className="border-b border-zinc-200 dark:border-zinc-800">
                 <th className="px-2.5 py-2 text-left font-medium">Канал</th>
@@ -1608,6 +1614,7 @@ function SpendCard({
                 <th className="px-2.5 py-2 text-right font-medium" title="Оплаты с датой в выбранном периоде">Продажи</th>
                 <th className="px-2.5 py-2 text-right font-medium">Цена продажи</th>
                 <th className="px-2.5 py-2 text-right font-medium">Выручка</th>
+                <th className="px-2.5 py-2 text-right font-medium" title="Сумма открытых сделок от лидов этого периода: ещё не выиграны и не проиграны">В работе</th>
                 <th className="px-2.5 py-2 text-right font-medium">Прибыль</th>
                 <th className="px-2.5 py-2 text-right font-medium">ROMI</th>
               </tr>
@@ -1636,6 +1643,7 @@ function SpendCard({
                     <td className="px-2.5 py-3 text-right tabular-nums text-zinc-700 dark:text-zinc-200">{fmtInt(r.payments)}</td>
                     <td className="px-2.5 py-3 text-right tabular-nums text-zinc-700 dark:text-zinc-200">{r.spend && r.payments ? fmtMoney(r.spend / r.payments, currency) : "—"}</td>
                     <td className="px-2.5 py-3 text-right font-medium tabular-nums text-zinc-900 dark:text-white">{fmtMoney(r.revenue, currency)}</td>
+                    <td className="px-2.5 py-3 text-right tabular-nums text-zinc-700 dark:text-zinc-200">{r.pipeline ? fmtMoney(r.pipeline, currency) : "—"}</td>
                     <td className={cx("px-2.5 py-3 text-right font-medium tabular-nums", !r.spend ? "text-zinc-400" : profit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
                       {r.spend ? `${profit >= 0 ? "+" : "−"}${fmtMoney(Math.abs(profit), currency)}` : "—"}
                     </td>
@@ -1657,6 +1665,7 @@ function SpendCard({
                 <td className="px-2.5 py-2.5 text-right tabular-nums">{fmtInt(total.paid)}</td>
                 <td className="px-2.5 py-2.5 text-right tabular-nums">{total.spend && total.paid ? fmtMoney(total.spend / total.paid, currency) : "—"}</td>
                 <td className="px-2.5 py-2.5 text-right tabular-nums">{fmtMoney(total.revenue, currency)}</td>
+                <td className="px-2.5 py-2.5 text-right tabular-nums">{total.pipeline ? fmtMoney(total.pipeline, currency) : "—"}</td>
                 <td className="px-2.5 py-2.5 text-right tabular-nums">{total.spend ? `${total.revenue >= total.spend ? "+" : "−"}${fmtMoney(Math.abs(total.revenue - total.spend), currency)}` : "—"}</td>
                 <td className="px-2.5 py-2.5 text-right tabular-nums">{total.spend ? fmtRomi((total.revenue - total.spend) / total.spend) : "—"}</td>
               </tr>
