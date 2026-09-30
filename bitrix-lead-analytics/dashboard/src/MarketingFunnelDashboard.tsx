@@ -82,6 +82,12 @@ export interface LeadEvent {
   revenue: number;
   /** Сумма открытых сделок лида в основной валюте (деньги "в работе") */
   pipeline?: number;
+  /** Сделки лида: в работе / выиграны / проиграны (если выручка считается по сделкам) */
+  dealsOpen?: number;
+  dealsWon?: number;
+  dealsLost?: number;
+  /** Сумма проигранных сделок в основной валюте */
+  lostAmount?: number;
   sqlAt: string | null;
   consultAt: string | null;
   paidAt: string | null;
@@ -259,6 +265,7 @@ export function generateMockDashboardData(now: Date = new Date(), seed = 2026092
         }
         const ageDays = (now.getTime() - created.getTime()) / DAY_MS;
         const lost = stage !== "paid" && ageDays > 10 && rnd() < 0.78;
+        const noSum = rnd() < 0.2; // часть сделок без суммы, как бывает в CRM
         const amount = Math.round((ch.check[0] + rnd() * (ch.check[1] - ch.check[0])) / 1000) * 1000;
         const stageStatus = { lead: "NEW", sql: "IN_PROCESS", consult: rnd() < 0.5 ? "UC_CONSULT" : "UC_OFFER", paid: "CONVERTED" }[stage];
         const status = lost ? (rnd() < 0.6 ? "JUNK" : "UC_REFUSED") : stageStatus;
@@ -277,7 +284,11 @@ export function generateMockDashboardData(now: Date = new Date(), seed = 2026092
           stage,
           lost,
           revenue: stage === "paid" ? amount : 0,
-          pipeline: stage === "consult" && !lost ? amount : 0,
+          pipeline: stage === "consult" && !lost && !noSum ? amount : 0,
+          dealsOpen: stage === "consult" && !lost ? 1 : 0,
+          dealsWon: stage === "paid" ? 1 : 0,
+          dealsLost: stage === "consult" && lost ? 1 : 0,
+          lostAmount: stage === "consult" && lost && !noSum ? amount : 0,
           sqlAt: sqlAt && toLocalIso(sqlAt),
           consultAt: consultAt && toLocalIso(consultAt),
           paidAt: paidAt && toLocalIso(paidAt),
@@ -590,6 +601,43 @@ export function computeChannels(
     crPaid: r.leads ? r.paid / r.leads : 0,
     romi: r.spend > 0 ? (r.revenue - r.spend) / r.spend : null,
   }));
+}
+
+export interface MoneyRow {
+  id: ChannelId;
+  label: string;
+  leads: number;
+  /** Лиды, у которых есть хотя бы одна сделка */
+  withDeals: number;
+  openLeads: number;
+  openSum: number;
+  wonLeads: number;
+  wonSum: number;
+  lostLeads: number;
+  lostSum: number;
+  /** Лиды со сделкой, где ни у одной сделки не указана сумма */
+  noSumLeads: number;
+}
+
+/** Деньги в сделках по лидам, пришедшим в период: сколько в работе, выиграно и проиграно. */
+export function computeMoney(events: LeadEvent[], channels: ChannelDef[], from: number, to: number): MoneyRow[] {
+  const rows = new Map<ChannelId, MoneyRow>(
+    channels.map((c) => [c.id, { id: c.id, label: c.label, leads: 0, withDeals: 0, openLeads: 0, openSum: 0, wonLeads: 0, wonSum: 0, lostLeads: 0, lostSum: 0, noSumLeads: 0 }]),
+  );
+  for (const e of events) {
+    const row = rows.get(e.channel);
+    if (!row || !inRange(e.createdAt, from, to)) continue;
+    row.leads++;
+    const open = e.dealsOpen ?? 0, won = e.dealsWon ?? 0, lost = e.dealsLost ?? 0;
+    if (open + won + lost === 0) continue;
+    row.withDeals++;
+    const pipeline = e.pipeline ?? 0, lostAmount = e.lostAmount ?? 0;
+    if (open > 0) { row.openLeads++; row.openSum += pipeline; }
+    if (won > 0) { row.wonLeads++; row.wonSum += e.revenue; }
+    if (lost > 0) { row.lostLeads++; row.lostSum += lostAmount; }
+    if (pipeline + e.revenue + lostAmount === 0) row.noSumLeads++;
+  }
+  return [...rows.values()];
 }
 
 export interface SeriesPoint {
@@ -988,6 +1036,111 @@ function Badge({ tone = "neutral", children, className }: { tone?: Tone; childre
     <span className={cx("inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 text-xs font-medium tabular-nums ring-1 ring-inset", TONE[tone], className)}>
       {children}
     </span>
+  );
+}
+
+function MoneyCard({ rows, defs, currency }: { rows: MoneyRow[]; defs: ChannelDef[]; currency: CurrencyCode }) {
+  const t = rows.reduce(
+    (a, r) => ({
+      leads: a.leads + r.leads, withDeals: a.withDeals + r.withDeals, openLeads: a.openLeads + r.openLeads, openSum: a.openSum + r.openSum,
+      wonLeads: a.wonLeads + r.wonLeads, wonSum: a.wonSum + r.wonSum, lostLeads: a.lostLeads + r.lostLeads, lostSum: a.lostSum + r.lostSum,
+      noSumLeads: a.noSumLeads + r.noSumLeads,
+    }),
+    { leads: 0, withDeals: 0, openLeads: 0, openSum: 0, wonLeads: 0, wonSum: 0, lostLeads: 0, lostSum: 0, noSumLeads: 0 },
+  );
+  const shown = rows.filter((r) => r.leads > 0).sort((a, b) => b.openSum + b.wonSum - (a.openSum + a.wonSum) || b.withDeals - a.withDeals);
+  const tiles: { label: string; sum: number; leads: number; color: string; note: string }[] = [
+    { label: "В работе", sum: t.openSum, leads: t.openLeads, color: COLORS.blue, note: "открытые сделки" },
+    { label: "Выиграно", sum: t.wonSum, leads: t.wonLeads, color: COLORS.emerald, note: "успешные сделки" },
+    { label: "Проиграно", sum: t.lostSum, leads: t.lostLeads, color: "#ef4444", note: "проигранные сделки" },
+  ];
+  const money = (v: number, n: number) => (v ? fmtMoney(v, currency) : n ? "без суммы" : "—");
+  const cell = "px-2.5 py-3 text-right tabular-nums";
+  return (
+    <Card>
+      <CardHeader
+        icon={Handshake}
+        title="Деньги в сделках"
+        description="По лидам, пришедшим в выбранный период: сколько денег и лидов сейчас в работе, выиграно и проиграно. Под суммой число лидов."
+      />
+      <CardContent className="space-y-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {tiles.map((x) => (
+            <div key={x.label} className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+              <p className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+                <span className="size-2 rounded-full" style={{ background: x.color }} />
+                {x.label}
+              </p>
+              <p className="mt-2 text-xl font-semibold tabular-nums text-zinc-900 dark:text-white">{fmtMoney(x.sum, currency)}</p>
+              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                {fmtInt(x.leads)} {plural(x.leads, "лид", "лида", "лидов")} · {x.note}
+              </p>
+            </div>
+          ))}
+          <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">Лиды со сделкой</p>
+            <p className="mt-2 text-xl font-semibold tabular-nums text-zinc-900 dark:text-white">
+              {fmtInt(t.withDeals)} <span className="text-sm font-normal text-zinc-500">из {fmtInt(t.leads)}</span>
+            </p>
+            <p className={cx("mt-1 text-xs", t.noSumLeads ? "text-amber-600 dark:text-amber-400" : "text-zinc-500 dark:text-zinc-400")}>
+              {t.noSumLeads ? `у ${fmtInt(t.noSumLeads)} не указана сумма сделки` : "у всех сделок есть сумма"}
+            </p>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm">
+            <thead className="text-xs text-zinc-500 dark:text-zinc-400">
+              <tr className="border-b border-zinc-200 dark:border-zinc-800">
+                <th className="px-2.5 py-2 text-left font-medium">Канал</th>
+                <th className="px-2.5 py-2 text-right font-medium">Лиды</th>
+                <th className="px-2.5 py-2 text-right font-medium">Со сделкой</th>
+                <th className="px-2.5 py-2 text-right font-medium">В работе</th>
+                <th className="px-2.5 py-2 text-right font-medium">Выиграно</th>
+                <th className="px-2.5 py-2 text-right font-medium">Проиграно</th>
+                <th className="px-2.5 py-2 text-right font-medium" title="(В работе + Выиграно) / число лидов канала">На 1 лид</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((r) => {
+                const idx = defs.findIndex((d) => d.id === r.id);
+                const st = channelStyle(r.id, defs[idx], Math.max(0, idx));
+                const Icon = st.icon;
+                const sub = (n: number) => <div className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400">{n ? `${fmtInt(n)} ${plural(n, "лид", "лида", "лидов")}` : ""}</div>;
+                return (
+                  <tr key={r.id} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/70">
+                    <td className="px-2.5 py-3">
+                      <span className="inline-flex items-center gap-2 font-medium text-zinc-800 dark:text-zinc-100">
+                        <span className="inline-flex size-6 items-center justify-center rounded-md" style={{ background: `${st.color}1a`, color: st.color }}>
+                          <Icon className="size-3.5" aria-hidden />
+                        </span>
+                        {r.label}
+                      </span>
+                    </td>
+                    <td className={cx(cell, "text-zinc-700 dark:text-zinc-200")}>{fmtInt(r.leads)}</td>
+                    <td className={cx(cell, "text-zinc-700 dark:text-zinc-200")}>{fmtInt(r.withDeals)}</td>
+                    <td className={cx(cell, "font-medium text-zinc-900 dark:text-white")}>{money(r.openSum, r.openLeads)}{sub(r.openLeads)}</td>
+                    <td className={cx(cell, "font-medium text-emerald-600 dark:text-emerald-400")}>{money(r.wonSum, r.wonLeads)}{sub(r.wonLeads)}</td>
+                    <td className={cx(cell, "text-red-600 dark:text-red-400")}>{money(r.lostSum, r.lostLeads)}{sub(r.lostLeads)}</td>
+                    <td className={cx(cell, "text-zinc-700 dark:text-zinc-200")}>{r.openSum + r.wonSum ? fmtMoney((r.openSum + r.wonSum) / r.leads, currency) : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-zinc-200 text-xs font-semibold text-zinc-700 dark:border-zinc-800 dark:text-zinc-200">
+                <td className="px-2.5 py-2.5">Итого</td>
+                <td className="px-2.5 py-2.5 text-right tabular-nums">{fmtInt(t.leads)}</td>
+                <td className="px-2.5 py-2.5 text-right tabular-nums">{fmtInt(t.withDeals)}</td>
+                <td className="px-2.5 py-2.5 text-right tabular-nums">{fmtMoney(t.openSum, currency)}</td>
+                <td className="px-2.5 py-2.5 text-right tabular-nums">{fmtMoney(t.wonSum, currency)}</td>
+                <td className="px-2.5 py-2.5 text-right tabular-nums">{fmtMoney(t.lostSum, currency)}</td>
+                <td className="px-2.5 py-2.5 text-right tabular-nums">{t.leads && t.openSum + t.wonSum ? fmtMoney((t.openSum + t.wonSum) / t.leads, currency) : "—"}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -2134,6 +2287,8 @@ export default function MarketingFunnelDashboard({
       },
       funnel: computeFunnel(events, daily, range.from, range.to),
       channels: computeChannels(data.rawEvents, data.channelDaily, data.channels, range.from, range.to),
+      money: computeMoney(data.rawEvents, data.channels, range.from, range.to),
+      hasDeals: data.rawEvents.some((e) => e.dealsOpen !== undefined),
       series: computeSeries(events, range.from, range.to, range.bucket),
       sources: computeSourcesByChannel(data.rawEvents, range.from, range.to),
       stages: computeStageCounts(events, data.statuses ?? [], range.from, range.to),
@@ -2268,6 +2423,7 @@ export default function MarketingFunnelDashboard({
               onDelete={deleteSpend}
             />
 
+            {view.hasDeals && <MoneyCard rows={view.money} defs={data?.channels ?? []} currency={currency} />}
             <LossesCard
               report={view.losses}
               statuses={data?.statuses ?? []}
