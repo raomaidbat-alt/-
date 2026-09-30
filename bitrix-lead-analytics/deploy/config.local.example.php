@@ -13,13 +13,6 @@ return [
      * icon: send, mail, bot, users, briefcase, megaphone, handshake, clapperboard, target, layers.
      */
     'channels' => [
-        'profi' => [
-            'label' => 'Профи',
-            'source_names' => ['Профи'],
-            'icon' => 'briefcase',
-            'spend_per_month' => 0,
-            'reach_per_month' => 0,
-        ],
         'email_marketer' => [
             'label' => 'E-mail рассылка от маркетолога',
             'source_names' => ['E-mail рассылка от маркетолога'],
@@ -35,8 +28,9 @@ return [
             'reach_per_month' => 0,
         ],
         'lead_harvester' => [
-            'label' => 'Lead Harvester',
-            'source_names' => ['Lead Harvester'],
+            // Профи.ру: лиды приходят с двумя источниками, считаем их одним каналом.
+            'label' => 'Профи.ру (Lead Harvester)',
+            'source_names' => ['Lead Harvester', 'Профи'],
             'icon' => 'target',
             'spend_per_month' => 11500,  // подписка Профи.ру
             'reach_per_month' => 0,

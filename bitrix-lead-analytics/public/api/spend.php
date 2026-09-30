@@ -5,7 +5,7 @@ declare(strict_types=1);
  * Расходы на каналы.
  *
  *   GET    /api/spend.php                 последние записи
- *   POST   /api/spend.php                 {"channel":"profi","dateFrom":"2026-09-01","dateTo":"2026-09-30","amount":30000,"comment":"..."}
+ *   POST   /api/spend.php                 {"channel":"lead_harvester","dateFrom":"2026-09-01","dateTo":"2026-09-30","amount":30000,"comment":"..."}
  *   DELETE /api/spend.php?id=123
  *
  * Авторизация как у остальных эндпоинтов: "Authorization: Bearer <token>".

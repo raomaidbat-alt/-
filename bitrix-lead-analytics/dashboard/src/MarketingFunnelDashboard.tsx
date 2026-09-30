@@ -200,9 +200,8 @@ export function generateMockDashboardData(now: Date = new Date(), seed = 2026092
     perDay: number; reach: number; spend: number;
     pSql: number; pConsult: number; pPaid: number; check: [number, number]; sources: string[];
   })[] = [
-    { id: "lead_harvester", label: "Lead Harvester", icon: "target", perDay: 3.2, reach: 2600, spend: 6_000, pSql: 0.5, pConsult: 0.45, pPaid: 0.3, check: [60_000, 180_000], sources: ["Lead Harvester"] },
+    { id: "lead_harvester", label: "Профи.ру (Lead Harvester)", icon: "target", perDay: 4.3, reach: 2600, spend: 6_000, pSql: 0.5, pConsult: 0.45, pPaid: 0.3, check: [60_000, 180_000], sources: ["Lead Harvester", "Профи"] },
     { id: "tg_bot", label: "Заявки из чатов (ТГ Бот)", icon: "bot", perDay: 2.8, reach: 1800, spend: 4_500, pSql: 0.55, pConsult: 0.5, pPaid: 0.32, check: [50_000, 150_000], sources: ["Заявки из чатов (ТГ Бот)"] },
-    { id: "profi", label: "Профи", icon: "briefcase", perDay: 1.1, reach: 700, spend: 0, pSql: 0.7, pConsult: 0.6, pPaid: 0.45, check: [80_000, 220_000], sources: ["Профи"] },
     { id: "email_marketer", label: "E-mail рассылка от маркетолога", icon: "mail", perDay: 0.8, reach: 900, spend: 0, pSql: 0.6, pConsult: 0.5, pPaid: 0.35, check: [50_000, 120_000], sources: ["E-mail рассылка от маркетолога"] },
     { id: "coldy", label: "Рассылка Coldy", icon: "megaphone", perDay: 0.9, reach: 1500, spend: 2_000, pSql: 0.4, pConsult: 0.4, pPaid: 0.25, check: [40_000, 110_000], sources: ["Рассылка Coldy"] },
     { id: "other", label: "Другие источники", perDay: 2.2, reach: 0, spend: 0, pSql: 0.5, pConsult: 0.45, pPaid: 0.3, check: [40_000, 140_000], sources: ["Звонок", "Веб-сайт", "По рекомендации", "Авито"] },
