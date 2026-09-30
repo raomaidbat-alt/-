@@ -18,6 +18,8 @@ final class EventFeed
         private readonly Db $db,
         private readonly ChannelMap $channels,
         private readonly array $funnelCfg = [],
+        private readonly bool $useDeals = true,
+        private readonly ?SpendRepository $spend = null,
     ) {
     }
 
@@ -95,6 +97,38 @@ final class EventFeed
             return $best ?? ($progressStages[0]['status_id'] ?? null);
         };
 
+        // Выручка по сделкам: если в базе есть сделки из лидов, "оплата" = выигранная сделка,
+        // сумма = сумма выигранных сделок, дата = момент выигрыша. Иначе считаем по лиду, как раньше.
+        $dealsByLead = [];
+        $revenueSource = 'leads';
+        if ($this->useDeals && $this->db->one('SELECT 1 AS x FROM deals LIMIT 1') !== null) {
+            $revenueSource = 'deals';
+            $rows = $this->db->all(
+                "SELECT d.lead_id, d.semantics, d.opportunity, d.currency_id, d.won_at
+                   FROM deals d
+                   JOIN leads_current l ON l.bitrix_id = d.lead_id
+                  WHERE l.is_deleted = 0 AND l.date_create BETWEEN ? AND ?",
+                [$fromUtc, $toUtc]
+            );
+            foreach ($rows as $r) {
+                $lid = (int) $r['lead_id'];
+                $dl = $dealsByLead[$lid] ?? ['count' => 0, 'lost' => 0, 'won' => 0, 'sum' => 0.0, 'wonAt' => null];
+                $dl['count']++;
+                if ($r['semantics'] === 'F') {
+                    $dl['lost']++;
+                } elseif ($r['semantics'] === 'S') {
+                    $dl['won']++;
+                    if (($r['currency_id'] ?: 'RUB') === $currency) {
+                        $dl['sum'] += (float) $r['opportunity'];
+                    }
+                    if ($r['won_at'] !== null && ($dl['wonAt'] === null || $r['won_at'] < $dl['wonAt'])) {
+                        $dl['wonAt'] = $r['won_at'];
+                    }
+                }
+                $dealsByLead[$lid] = $dl;
+            }
+        }
+
         $iso = static fn (?string $utc) => $utc === null ? null
             : (new \DateTimeImmutable($utc, new \DateTimeZone('UTC')))->setTimezone($tz)->format('Y-m-d\TH:i:sP');
 
@@ -110,32 +144,54 @@ final class EventFeed
                 (int) $l['is_qualified'] === 1 => 'sql',
                 default => 'lead',
             };
+            $lost = $sem === 'F';
+            $revenue = $sem === 'S' && ($l['currency_id'] ?: 'RUB') === $currency ? (float) $l['opportunity'] : 0.0;
+            $paidAtUtc = null;
+            $lossReason = $l['loss_reason'];
+            if ($revenueSource === 'deals') {
+                $dl = $dealsByLead[$id] ?? null;
+                if ($dl !== null && $dl['won'] > 0) {
+                    $stage = 'paid';
+                    $revenue = $dl['sum'];
+                    $paidAtUtc = $dl['wonAt'];
+                } else {
+                    $revenue = 0.0;
+                    if ($stage === 'paid') {
+                        // Лид сконвертирован, но сделка ещё не выиграна: он дошёл до консультации, не до оплаты.
+                        $stage = $consultSort !== null ? 'consult' : 'sql';
+                    }
+                    if ($dl !== null && $dl['count'] > 0 && $dl['lost'] === $dl['count']) {
+                        $lost = true;
+                        $lossReason = $lossReason ?: 'Сделка проиграна';
+                    }
+                }
+            }
             $channel = $this->channels->channelOf($l['source_id'], $l['utm_source']);
             $present[$channel] = true;
             $m = $milestones[$id] ?? [];
-            $sameCurrency = ($l['currency_id'] ?: 'RUB') === $currency;
             $events[] = [
                 'id' => (string) $id,
                 'createdAt' => $iso($l['date_create']),
                 'channel' => $channel,
                 'stage' => $stage,
-                'lost' => $sem === 'F',
-                'revenue' => $sem === 'S' && $sameCurrency ? (float) $l['opportunity'] : 0.0,
+                'lost' => $lost,
+                'revenue' => $revenue,
                 'sqlAt' => $stage !== 'lead' ? $iso($m['sql_at'] ?? null) : null,
-                'consultAt' => in_array($stage, ['consult', 'paid'], true) ? $iso($m['consult_at'] ?? null) : null,
-                'paidAt' => $stage === 'paid' ? $iso($m['paid_at'] ?? null) : null,
+                'consultAt' => in_array($stage, ['consult', 'paid'], true) ? $iso($m['consult_at'] ?? $m['paid_at'] ?? null) : null,
+                'paidAt' => $stage === 'paid' ? $iso($paidAtUtc ?? $m['paid_at'] ?? null) : null,
                 'status' => $l['status_id'],
                 'source' => $l['source_id'] !== null ? ($sourceNames[$l['source_id']] ?? $l['source_id']) : null,
                 'utmSource' => $l['utm_source'],
                 'amount' => (float) $l['opportunity'],
                 'stageEnteredAt' => $iso($l['stage_entered_at']),
-                'lostAt' => $sem === 'F' ? $iso($m['lost_at'] ?? $l['stage_entered_at']) : null,
-                'lostFrom' => $sem === 'F' ? $stageAtSort($maxSort) : null,
-                'lossReason' => $sem === 'F' ? $l['loss_reason'] : null,
+                'lostAt' => $lost ? $iso($m['lost_at'] ?? $l['stage_entered_at']) : null,
+                'lostFrom' => $lost ? ($sem === 'F' ? $stageAtSort($maxSort) : $l['status_id']) : null,
+                'lossReason' => $lost ? $lossReason : null,
             ];
         }
 
-        // Охват и расходы по дням: в Bitrix24 их нет, берём из конфига (месяц / 30.44).
+        // Охват и расходы по дням. Охват из конфига (месяц / 30.44). Расход: если для канала
+        // внесены записи в дашборде, берём их (сумма делится на дни периода), иначе spend_per_month.
         $channelDaily = [];
         $firstDay = $leads ? (new \DateTimeImmutable($leads[0]['date_create'], new \DateTimeZone('UTC')))->setTimezone($tz) : null;
         $from = (new \DateTimeImmutable($fromUtc, new \DateTimeZone('UTC')))->setTimezone($tz);
@@ -143,13 +199,19 @@ final class EventFeed
             $from = $firstDay; // для "всего времени" не рисуем охват с 2000 года
         }
         $to = (new \DateTimeImmutable($toUtc, new \DateTimeZone('UTC')))->setTimezone($tz);
+        $manual = $this->spend?->perDay($from->format('Y-m-d'), $to->format('Y-m-d')) ?? [];
+        $manualChannels = array_flip($this->spend?->channelsWithEntries() ?? []);
         for ($d = $from->setTime(0, 0); $d <= $to && count($channelDaily) < 20000; $d = $d->modify('+1 day')) {
             foreach ($this->channels->options() as $o) {
+                $day = $d->format('Y-m-d');
+                $spend = isset($manualChannels[$o['id']])
+                    ? ($manual[$o['id']][$day] ?? 0.0)
+                    : ($this->channels->spendPerDay($o['id']) ?? 0.0);
                 $channelDaily[] = [
-                    'date' => $d->format('Y-m-d'),
+                    'date' => $day,
                     'channel' => $o['id'],
                     'reach' => (int) round($this->channels->reachPerDay($o['id']) ?? 0),
-                    'spend' => round($this->channels->spendPerDay($o['id']) ?? 0, 2),
+                    'spend' => round($spend, 2),
                 ];
             }
         }
@@ -161,6 +223,8 @@ final class EventFeed
 
         return [
             'currency' => $currency,
+            'revenueSource' => $revenueSource,
+            'spendEntries' => $this->spend?->list($from->format('Y-m-d'), $to->format('Y-m-d')) ?? [],
             'channels' => array_map(
                 static fn ($c) => ['id' => $c['id'], 'label' => $c['name']] + array_intersect_key($c, ['icon' => 1, 'color' => 1]),
                 $channels

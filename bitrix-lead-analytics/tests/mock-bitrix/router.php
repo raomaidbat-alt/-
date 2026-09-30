@@ -104,6 +104,47 @@ function mock_dispatch(string $method, array $p, array $state): array
                 $r['next'] = $start + 50;
             }
             return $r;
+        case 'crm.deal.list':
+            // Сделки из сконвертированных лидов: детерминированно по ID лида.
+            $now = strtotime($state['now']);
+            $deals = [];
+            foreach ($state['leads'] as $l) {
+                if (!empty($l['_deleted']) || ($l['STATUS_ID'] ?? '') !== 'CONVERTED') {
+                    continue;
+                }
+                $h = crc32('deal' . $l['ID']);
+                $created = strtotime($l['MOVED_TIME']);
+                $moved = min($now, $created + ($h % 10) * 86400 + 3600);
+                $sem = ($h % 100) < 60 ? 'S' : (($h % 100) < 75 ? 'F' : 'P');
+                $deals[] = [
+                    'ID' => (string) (100000 + (int) $l['ID']),
+                    'LEAD_ID' => $l['ID'],
+                    'STAGE_ID' => $sem === 'S' ? 'WON' : ($sem === 'F' ? 'LOSE' : 'EXECUTING'),
+                    'STAGE_SEMANTIC_ID' => $sem,
+                    'OPPORTUNITY' => (string) round((float) $l['OPPORTUNITY'] * (0.8 + ($h % 40) / 100)),
+                    'CURRENCY_ID' => $l['CURRENCY_ID'],
+                    'DATE_CREATE' => mock_iso($created),
+                    'DATE_MODIFY' => mock_iso($sem === 'P' ? $created : $moved),
+                    'MOVED_TIME' => mock_iso($sem === 'P' ? $created : $moved),
+                    'CLOSEDATE' => mock_iso($moved),
+                    'CLOSED' => $sem === 'P' ? 'N' : 'Y',
+                    'TITLE' => 'Сделка с Иваном Петровым', // не должно попасть в базу
+                ];
+            }
+            if (isset($p['filter']['>=DATE_MODIFY'])) {
+                $ts = strtotime((string) $p['filter']['>=DATE_MODIFY']);
+                $deals = array_values(array_filter($deals, static fn ($d) => strtotime($d['DATE_MODIFY']) >= $ts));
+            }
+            if (isset($p['filter']['>=DATE_CREATE'])) {
+                $ts = strtotime((string) $p['filter']['>=DATE_CREATE']);
+                $deals = array_values(array_filter($deals, static fn ($d) => strtotime($d['DATE_CREATE']) >= $ts));
+            }
+            $start = (int) ($p['start'] ?? 0);
+            $r = ['result' => array_slice($deals, $start, 50), 'total' => count($deals)];
+            if ($start + 50 < count($deals)) {
+                $r['next'] = $start + 50;
+            }
+            return $r;
         default:
             return ['error' => 'ERROR_METHOD_NOT_FOUND', 'error_description' => 'Method not found: ' . $method];
     }

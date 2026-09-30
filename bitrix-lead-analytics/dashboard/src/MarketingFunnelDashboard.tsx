@@ -11,7 +11,7 @@
  *
  * Зависимости: react, recharts, lucide-react, tailwindcss (dark-режим через класс .dark на <html>).
  */
-import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   Area,
   AreaChart,
@@ -31,6 +31,9 @@ import {
   ArrowUp,
   ArrowUpDown,
   Banknote,
+  Plus,
+  Trash2,
+  Wallet,
   ChevronDown,
   Cog,
   ExternalLink,
@@ -137,11 +140,27 @@ export interface DashboardData {
     portalUrl?: string | null;
     /** Интервал синхронизации с CRM, минут */
     syncIntervalMinutes?: number;
+    /** Откуда выручка: выигранные сделки из лидов или сумма лида в успешной стадии */
+    revenueSource?: "deals" | "leads";
   };
   channels: ChannelDef[];
   rawEvents: LeadEvent[];
   channelDaily: ChannelDailyStat[];
   statuses?: StatusDef[];
+  /** Расходы, внесённые вручную (сумма равномерно делится на дни периода) */
+  spendEntries?: SpendEntry[];
+  /** Только для демо: дневные расходы до применения ручных записей */
+  baseChannelDaily?: ChannelDailyStat[];
+}
+
+/** Запись расхода на канал: день, месяц или любой период. */
+export interface SpendEntry {
+  id: string;
+  channel: ChannelId;
+  dateFrom: string; // YYYY-MM-DD
+  dateTo: string; // YYYY-MM-DD
+  amount: number;
+  comment?: string | null;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -183,8 +202,8 @@ export function generateMockDashboardData(now: Date = new Date(), seed = 2026092
   })[] = [
     { id: "lead_harvester", label: "Lead Harvester", icon: "target", perDay: 3.2, reach: 2600, spend: 6_000, pSql: 0.5, pConsult: 0.45, pPaid: 0.3, check: [60_000, 180_000], sources: ["Lead Harvester"] },
     { id: "tg_bot", label: "Заявки из чатов (ТГ Бот)", icon: "bot", perDay: 2.8, reach: 1800, spend: 4_500, pSql: 0.55, pConsult: 0.5, pPaid: 0.32, check: [50_000, 150_000], sources: ["Заявки из чатов (ТГ Бот)"] },
-    { id: "profi", label: "Профи", icon: "briefcase", perDay: 1.1, reach: 700, spend: 3_000, pSql: 0.7, pConsult: 0.6, pPaid: 0.45, check: [80_000, 220_000], sources: ["Профи"] },
-    { id: "email_marketer", label: "E-mail рассылка от маркетолога", icon: "mail", perDay: 0.8, reach: 900, spend: 1_500, pSql: 0.6, pConsult: 0.5, pPaid: 0.35, check: [50_000, 120_000], sources: ["E-mail рассылка от маркетолога"] },
+    { id: "profi", label: "Профи", icon: "briefcase", perDay: 1.1, reach: 700, spend: 0, pSql: 0.7, pConsult: 0.6, pPaid: 0.45, check: [80_000, 220_000], sources: ["Профи"] },
+    { id: "email_marketer", label: "E-mail рассылка от маркетолога", icon: "mail", perDay: 0.8, reach: 900, spend: 0, pSql: 0.6, pConsult: 0.5, pPaid: 0.35, check: [50_000, 120_000], sources: ["E-mail рассылка от маркетолога"] },
     { id: "coldy", label: "Рассылка Coldy", icon: "megaphone", perDay: 0.9, reach: 1500, spend: 2_000, pSql: 0.4, pConsult: 0.4, pPaid: 0.25, check: [40_000, 110_000], sources: ["Рассылка Coldy"] },
     { id: "other", label: "Другие источники", perDay: 2.2, reach: 0, spend: 0, pSql: 0.5, pConsult: 0.45, pPaid: 0.3, check: [40_000, 140_000], sources: ["Звонок", "Веб-сайт", "По рекомендации", "Авито"] },
   ];
@@ -271,6 +290,24 @@ export function generateMockDashboardData(now: Date = new Date(), seed = 2026092
   }
   events.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 
+  // Бюджеты как у реальных каналов: помесячные записи расходов за последние 13 месяцев.
+  const budgets: Record<string, number> = { lead_harvester: 11_500, tg_bot: 1_500, coldy: 10_000 };
+  const spendEntries: SpendEntry[] = [];
+  for (let back = 0; back < 13; back++) {
+    const first = new Date(now.getFullYear(), now.getMonth() - back, 1);
+    const last = new Date(now.getFullYear(), now.getMonth() - back + 1, 0);
+    for (const [channel, amount] of Object.entries(budgets)) {
+      spendEntries.push({
+        id: `demo-${channel}-${back}`,
+        channel,
+        dateFrom: toLocalIso(first).slice(0, 10),
+        dateTo: toLocalIso(last).slice(0, 10),
+        amount,
+        comment: back === 0 ? "бюджет месяца" : null,
+      });
+    }
+  }
+
   return {
     meta: {
       source: "mock",
@@ -282,7 +319,9 @@ export function generateMockDashboardData(now: Date = new Date(), seed = 2026092
     },
     channels: channels.map(({ id: cid, label, icon }) => ({ id: cid, label, icon })),
     rawEvents: events,
-    channelDaily: channelDaily.filter((d) => d.channel !== "other"),
+    baseChannelDaily: channelDaily.filter((d) => d.channel !== "other"),
+    channelDaily: applySpendEntries(channelDaily.filter((d) => d.channel !== "other"), spendEntries),
+    spendEntries: spendEntries.filter((e) => e.dateTo >= toLocalIso(new Date(now.getFullYear(), now.getMonth() - 2, 1)).slice(0, 10)),
     statuses: [
       { id: "NEW", name: "Новая заявка", color: "#39A8EF", semantics: "P", sort: 10 },
       { id: "IN_PROCESS", name: "Квалификация", color: "#2FC6F6", semantics: "P", sort: 20 },
@@ -324,7 +363,40 @@ export async function fetchDashboardData(
     rawEvents: raw.rawEvents.map((e) => ({ ...e, revenue: Number(e.revenue) || 0 })),
     channelDaily: (raw.channelDaily ?? []).map((d) => ({ ...d, reach: Number(d.reach) || 0, spend: Number(d.spend) || 0 })),
     statuses: raw.statuses ?? [],
+    spendEntries: (raw.spendEntries ?? []).map((e) => ({ ...e, amount: Number(e.amount) || 0 })),
   };
+}
+
+/** Запросы к API расходов (spend.php): добавить или удалить запись. */
+async function spendRequest(url: string, token: string | undefined, init: RequestInit): Promise<void> {
+  const res = await fetch(new URL(url, window.location.href), {
+    ...init,
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), "Content-Type": "application/json" },
+  });
+  if (res.status === 401) throw new ApiAuthError("Неверный или просроченный токен API");
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? `Не удалось сохранить (ответ ${res.status})`);
+  }
+}
+
+/**
+ * Для демо-режима: пересчитать дневные расходы так же, как сервер. Каналы, по которым есть записи,
+ * берут расход только из них (сумма делится на дни периода), остальные остаются как были.
+ */
+export function applySpendEntries(daily: ChannelDailyStat[], entries: SpendEntry[]): ChannelDailyStat[] {
+  const perDay = new Map<string, number>();
+  const withEntries = new Set(entries.map((e) => e.channel));
+  for (const e of entries) {
+    const start = new Date(e.dateFrom + "T12:00:00");
+    const end = new Date(e.dateTo + "T12:00:00");
+    const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / DAY_MS) + 1);
+    for (let d = new Date(start); d <= end; d = new Date(d.getTime() + DAY_MS)) {
+      const k = `${e.channel}|${toLocalIso(d).slice(0, 10)}`;
+      perDay.set(k, (perDay.get(k) ?? 0) + e.amount / days);
+    }
+  }
+  return daily.map((r) => (withEntries.has(r.channel) ? { ...r, spend: perDay.get(`${r.channel}|${r.date}`) ?? 0 } : r));
 }
 
 // ── 2.3 Нормализация и агрегаты: чистые функции ───────────────────────────────────
@@ -462,7 +534,10 @@ export interface ChannelRow {
   reach: number;
   c1: number | null;
   sql: number;
+  /** Оплаты от лидов, пришедших в период (для конверсии) */
   paid: number;
+  /** Оплаты, случившиеся в период (для выручки, цены продажи и ROMI) */
+  payments: number;
   crPaid: number;
   revenue: number;
   spend: number;
@@ -479,7 +554,7 @@ export function computeChannels(
   const fromKey = toLocalIso(new Date(from)).slice(0, 10);
   const toKey = toLocalIso(new Date(to)).slice(0, 10);
   const rows = new Map<ChannelId, ChannelRow>(
-    channels.map((c) => [c.id, { id: c.id, label: c.label, leads: 0, reach: 0, c1: null, sql: 0, paid: 0, crPaid: 0, revenue: 0, spend: 0, romi: null }]),
+    channels.map((c) => [c.id, { id: c.id, label: c.label, leads: 0, reach: 0, c1: null, sql: 0, paid: 0, payments: 0, crPaid: 0, revenue: 0, spend: 0, romi: null }]),
   );
   for (const e of events) {
     const row = rows.get(e.channel);
@@ -489,7 +564,10 @@ export function computeChannels(
       if (reached(e, "sql")) row.sql++;
       if (e.stage === "paid") row.paid++;
     }
-    if (e.stage === "paid" && inRange(e.paidAt ?? e.createdAt, from, to)) row.revenue += e.revenue;
+    if (e.stage === "paid" && inRange(e.paidAt ?? e.createdAt, from, to)) {
+      row.revenue += e.revenue;
+      row.payments++;
+    }
   }
   for (const d of daily) {
     const row = rows.get(d.channel);
@@ -694,6 +772,8 @@ interface DataState {
   loading: boolean;
   error: string | null;
   refresh: () => void;
+  /** Только для демо: локально изменить данные (например, добавить расход) */
+  setLocal: (fn: (d: DashboardData) => DashboardData) => void;
 }
 
 function useDashboardData(opts: {
@@ -741,7 +821,8 @@ function useDashboardData(opts: {
   }, [apiUrl, refreshIntervalMs]);
 
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
-  return { data, loading, error, refresh };
+  const setLocal = useCallback((fn: (d: DashboardData) => DashboardData) => setData((d) => (d ? fn(d) : d)), []);
+  return { data, loading, error, refresh, setLocal };
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1379,6 +1460,240 @@ function EmptyState({ text }: { text: string }) {
   return <div className="flex h-full items-center justify-center text-sm text-zinc-400">{text}</div>;
 }
 
+// ── Расходы и окупаемость ──────────────────────────────────────────────────────────
+
+type SpendMode = "month" | "day" | "range";
+
+function SpendCard({
+  rows, defs, entries, currency, revenueSource, onAdd, onDelete,
+}: {
+  rows: ChannelRow[]; defs: ChannelDef[]; entries: SpendEntry[]; currency: CurrencyCode; revenueSource?: "deals" | "leads";
+  onAdd: (e: Omit<SpendEntry, "id">) => Promise<void>; onDelete: (id: string) => Promise<void>;
+}) {
+  const editable = defs.filter((d) => d.id !== "other");
+  const shown = rows.filter((r) => r.id !== "other" || r.spend > 0);
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<SpendMode>("month");
+  const today = toLocalIso(new Date()).slice(0, 10);
+  const [form, setForm] = useState({ channel: editable[0]?.id ?? "", month: today.slice(0, 7), day: today, from: today, to: today, amount: "", comment: "" });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const labelOf = (id: ChannelId) => defs.find((d) => d.id === id)?.label ?? id;
+  const dfmt = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", year: "numeric" });
+  const mfmt = new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric" });
+
+  const total = shown.reduce(
+    (a, r) => ({ spend: a.spend + r.spend, leads: a.leads + r.leads, paid: a.paid + r.payments, revenue: a.revenue + r.revenue }),
+    { spend: 0, leads: 0, paid: 0, revenue: 0 },
+  );
+
+  const submit = async (ev: FormEvent) => {
+    ev.preventDefault();
+    const amount = Number(String(form.amount).replace(/\s/g, "").replace(",", "."));
+    if (!form.channel) return setErr("Выберите канал");
+    if (!Number.isFinite(amount) || amount <= 0) return setErr("Укажите сумму больше нуля");
+    let dateFrom = form.day;
+    let dateTo = form.day;
+    if (mode === "month") {
+      const [y, m] = form.month.split("-").map(Number);
+      dateFrom = `${form.month}-01`;
+      dateTo = toLocalIso(new Date(y, m, 0)).slice(0, 10); // последний день месяца
+    } else if (mode === "range") {
+      [dateFrom, dateTo] = form.from <= form.to ? [form.from, form.to] : [form.to, form.from];
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await onAdd({ channel: form.channel, dateFrom, dateTo, amount, comment: form.comment.trim() || null });
+      setForm((f) => ({ ...f, amount: "", comment: "" }));
+      setOpen(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Не удалось сохранить");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const periodLabel = (e: SpendEntry) => {
+    const from = new Date(e.dateFrom + "T12:00:00");
+    const to = new Date(e.dateTo + "T12:00:00");
+    const lastDay = new Date(from.getFullYear(), from.getMonth() + 1, 0).getDate();
+    if (e.dateFrom === e.dateTo) return dfmt.format(from);
+    if (from.getDate() === 1 && to.getDate() === lastDay && from.getMonth() === to.getMonth()) return mfmt.format(from);
+    return `${dfmt.format(from)} – ${dfmt.format(to)}`;
+  };
+
+  const inputCls =
+    "h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-orange-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100";
+
+  return (
+    <Card>
+      <CardHeader
+        icon={Wallet}
+        title="Расходы и окупаемость"
+        description={
+          revenueSource === "deals"
+            ? "Выручка по выигранным сделкам, созданным из лидов канала. Расход за период из записей ниже или бюджета из настроек."
+            : "Выручка по сумме лидов в успешной стадии. Расход за период из записей ниже или бюджета из настроек."
+        }
+        action={
+          editable.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-gradient-to-b from-[#ff8a2e] to-[#f06400] px-3 text-xs font-semibold text-white shadow-[0_4px_14px_rgba(255,122,26,.3)] transition-transform hover:-translate-y-px"
+            >
+              <Plus className="size-3.5" aria-hidden />
+              Добавить расход
+            </button>
+          )
+        }
+      />
+      <CardContent className="space-y-5">
+        {open && (
+          <form onSubmit={submit} className="grid gap-3 rounded-lg border border-zinc-200 bg-zinc-50/70 p-4 sm:grid-cols-2 lg:grid-cols-6 dark:border-zinc-800 dark:bg-zinc-900/60">
+            <label className="lg:col-span-2">
+              <span className="mb-1 block text-xs text-zinc-500 dark:text-zinc-400">Канал</span>
+              <select id="spend-channel" value={form.channel} onChange={(e) => setForm({ ...form, channel: e.target.value })} className={inputCls}>
+                {editable.map((d) => (
+                  <option key={d.id} value={d.id}>{d.label}</option>
+                ))}
+              </select>
+            </label>
+            <div className="lg:col-span-2">
+              <span className="mb-1 block text-xs text-zinc-500 dark:text-zinc-400">Период</span>
+              <Segmented label="Тип периода" value={mode} onChange={setMode} options={[{ key: "month", label: "Месяц" }, { key: "day", label: "День" }, { key: "range", label: "С–по" }]} />
+            </div>
+            <label className="lg:col-span-2">
+              <span className="mb-1 block text-xs text-zinc-500 dark:text-zinc-400">{mode === "month" ? "Месяц" : mode === "day" ? "Дата" : "Даты"}</span>
+              {mode === "month" && <input id="spend-month" type="month" value={form.month} onChange={(e) => setForm({ ...form, month: e.target.value })} className={inputCls} required />}
+              {mode === "day" && <input id="spend-day" type="date" value={form.day} onChange={(e) => setForm({ ...form, day: e.target.value })} className={inputCls} required />}
+              {mode === "range" && (
+                <span className="flex gap-2">
+                  <input id="spend-from" type="date" value={form.from} onChange={(e) => setForm({ ...form, from: e.target.value })} className={inputCls} required />
+                  <input id="spend-to" type="date" value={form.to} onChange={(e) => setForm({ ...form, to: e.target.value })} className={inputCls} required />
+                </span>
+              )}
+            </label>
+            <label className="lg:col-span-2">
+              <span className="mb-1 block text-xs text-zinc-500 dark:text-zinc-400">Сумма, {currency === "RUB" ? "₽" : currency}</span>
+              <input id="spend-amount" inputMode="decimal" placeholder="11 500" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className={inputCls} required />
+            </label>
+            <label className="lg:col-span-3">
+              <span className="mb-1 block text-xs text-zinc-500 dark:text-zinc-400">Комментарий (необязательно)</span>
+              <input id="spend-comment" maxLength={255} placeholder="Например: подписка за сентябрь" value={form.comment} onChange={(e) => setForm({ ...form, comment: e.target.value })} className={inputCls} />
+            </label>
+            <div className="flex items-end gap-2 lg:col-span-1">
+              <button type="submit" disabled={busy} className="h-9 flex-1 rounded-lg bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 disabled:opacity-60 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-100">
+                {busy ? "Сохраняю…" : "Сохранить"}
+              </button>
+            </div>
+            {err && <p role="alert" className="text-xs text-red-600 sm:col-span-2 lg:col-span-6 dark:text-red-400">{err}</p>}
+          </form>
+        )}
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[820px] text-sm">
+            <thead className="text-xs text-zinc-500 dark:text-zinc-400">
+              <tr className="border-b border-zinc-200 dark:border-zinc-800">
+                <th className="px-2.5 py-2 text-left font-medium">Канал</th>
+                <th className="px-2.5 py-2 text-right font-medium">Расход</th>
+                <th className="px-2.5 py-2 text-right font-medium">Лиды</th>
+                <th className="px-2.5 py-2 text-right font-medium">Цена лида</th>
+                <th className="px-2.5 py-2 text-right font-medium" title="Оплаты с датой в выбранном периоде">Продажи</th>
+                <th className="px-2.5 py-2 text-right font-medium">Цена продажи</th>
+                <th className="px-2.5 py-2 text-right font-medium">Выручка</th>
+                <th className="px-2.5 py-2 text-right font-medium">Прибыль</th>
+                <th className="px-2.5 py-2 text-right font-medium">ROMI</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...shown].sort((a, b) => b.spend - a.spend || b.revenue - a.revenue).map((r) => {
+                const idx = defs.findIndex((d) => d.id === r.id);
+                const st = channelStyle(r.id, defs[idx], Math.max(0, idx));
+                const Icon = st.icon;
+                const profit = r.revenue - r.spend;
+                return (
+                  <tr key={r.id} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/70">
+                    <td className="px-2.5 py-3">
+                      <span className="inline-flex items-center gap-2 font-medium text-zinc-800 dark:text-zinc-100">
+                        <span className="inline-flex size-6 items-center justify-center rounded-md" style={{ background: `${st.color}1a`, color: st.color }}>
+                          <Icon className="size-3.5" aria-hidden />
+                        </span>
+                        {r.label}
+                      </span>
+                    </td>
+                    <td className="px-2.5 py-3 text-right tabular-nums text-zinc-900 dark:text-zinc-100">{r.spend ? fmtMoney(r.spend, currency) : "—"}</td>
+                    <td className="px-2.5 py-3 text-right tabular-nums text-zinc-700 dark:text-zinc-200">{fmtInt(r.leads)}</td>
+                    <td className="px-2.5 py-3 text-right tabular-nums text-zinc-700 dark:text-zinc-200">{r.spend && r.leads ? fmtMoney(r.spend / r.leads, currency) : "—"}</td>
+                    <td className="px-2.5 py-3 text-right tabular-nums text-zinc-700 dark:text-zinc-200">{fmtInt(r.payments)}</td>
+                    <td className="px-2.5 py-3 text-right tabular-nums text-zinc-700 dark:text-zinc-200">{r.spend && r.payments ? fmtMoney(r.spend / r.payments, currency) : "—"}</td>
+                    <td className="px-2.5 py-3 text-right font-medium tabular-nums text-zinc-900 dark:text-white">{fmtMoney(r.revenue, currency)}</td>
+                    <td className={cx("px-2.5 py-3 text-right font-medium tabular-nums", !r.spend ? "text-zinc-400" : profit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
+                      {r.spend ? `${profit >= 0 ? "+" : "−"}${fmtMoney(Math.abs(profit), currency)}` : "—"}
+                    </td>
+                    <td className="px-2.5 py-3 text-right">
+                      {r.romi === null ? <span className="text-zinc-400">—</span> : <Badge tone={r.romi >= 1 ? "positive" : r.romi >= 0 ? "warning" : "negative"}>{fmtRomi(r.romi)}</Badge>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-zinc-200 text-xs font-semibold text-zinc-700 dark:border-zinc-800 dark:text-zinc-200">
+                <td className="px-2.5 py-2.5">Итого</td>
+                <td className="px-2.5 py-2.5 text-right tabular-nums">{fmtMoney(total.spend, currency)}</td>
+                <td className="px-2.5 py-2.5 text-right tabular-nums">{fmtInt(total.leads)}</td>
+                <td className="px-2.5 py-2.5 text-right tabular-nums">{total.spend && total.leads ? fmtMoney(total.spend / total.leads, currency) : "—"}</td>
+                <td className="px-2.5 py-2.5 text-right tabular-nums">{fmtInt(total.paid)}</td>
+                <td className="px-2.5 py-2.5 text-right tabular-nums">{total.spend && total.paid ? fmtMoney(total.spend / total.paid, currency) : "—"}</td>
+                <td className="px-2.5 py-2.5 text-right tabular-nums">{fmtMoney(total.revenue, currency)}</td>
+                <td className="px-2.5 py-2.5 text-right tabular-nums">{total.spend ? `${total.revenue >= total.spend ? "+" : "−"}${fmtMoney(Math.abs(total.revenue - total.spend), currency)}` : "—"}</td>
+                <td className="px-2.5 py-2.5 text-right tabular-nums">{total.spend ? fmtRomi((total.revenue - total.spend) / total.spend) : "—"}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Внесённые расходы</p>
+          {entries.length === 0 ? (
+            <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
+              Записей за период нет: расход считается по бюджетам из настроек каналов. Добавьте запись, и для этого канала она заменит бюджет.
+            </p>
+          ) : (
+            <ul className="mt-2 divide-y divide-zinc-100 dark:divide-zinc-800/70">
+              {entries.map((e) => (
+                <li key={e.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-sm">
+                  <span className="min-w-40 font-medium text-zinc-800 dark:text-zinc-100">{labelOf(e.channel)}</span>
+                  <span className="text-zinc-500 dark:text-zinc-400">{periodLabel(e)}</span>
+                  {e.comment && <span className="truncate text-xs text-zinc-400">{e.comment}</span>}
+                  <span className="ml-auto font-semibold tabular-nums text-zinc-900 dark:text-white">{fmtMoney(e.amount, currency)}</span>
+                  {confirmId === e.id ? (
+                    <span className="inline-flex items-center gap-1">
+                      <button type="button" onClick={() => { setConfirmId(null); void onDelete(e.id); }} className="h-8 rounded-lg bg-red-600 px-2.5 text-xs font-medium text-white hover:bg-red-500">
+                        Удалить
+                      </button>
+                      <button type="button" onClick={() => setConfirmId(null)} className="h-8 rounded-lg px-2 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
+                        Отмена
+                      </button>
+                    </span>
+                  ) : (
+                    <IconButton label="Удалить запись" onClick={() => setConfirmId(e.id)}>
+                      <Trash2 className="size-3.5" />
+                    </IconButton>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Потери ─────────────────────────────────────────────────────────────────────────
 
 function LossBars({ title, hint, items, currency, colorFallback }: { title: string; hint?: string; items: LossBucket[]; currency: CurrencyCode; colorFallback: string }) {
@@ -1714,6 +2029,8 @@ export interface MarketingFunnelDashboardProps {
   refreshIntervalMs?: number;
   /** Вызывается при 401 от API */
   onAuthError?: () => void;
+  /** URL API расходов (по умолчанию рядом с apiUrl: .../spend.php) */
+  spendApiUrl?: string;
   title?: string;
   /** Подпись бренда над заголовком */
   brand?: string;
@@ -1725,6 +2042,7 @@ export default function MarketingFunnelDashboard({
   initialData,
   refreshIntervalMs = 5 * 60_000,
   onAuthError,
+  spendApiUrl,
   title = "Воронка продаж и каналы",
   brand = "ФОРАЙТИ · аналитика лидов",
 }: MarketingFunnelDashboardProps) {
@@ -1732,7 +2050,48 @@ export default function MarketingFunnelDashboard({
   const [channel, setChannel] = useState<ChannelId | "all">("all");
   const [dark, toggleTheme] = useTheme();
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const { data, loading, error, refresh } = useDashboardData({ apiUrl, apiToken, period, initialData, refreshIntervalMs, onAuthError });
+  const { data, loading, error, refresh, setLocal } = useDashboardData({ apiUrl, apiToken, period, initialData, refreshIntervalMs, onAuthError });
+  const spendUrl = spendApiUrl ?? (apiUrl ? apiUrl.replace(/events\.php(\?.*)?$/, "spend.php") : undefined);
+  // Демо: исходные дневные расходы до ручных записей, чтобы удаление записи возвращало бюджет.
+  const baseDaily = useRef<ChannelDailyStat[] | null>(null);
+  if (!apiUrl && data && baseDaily.current === null) baseDaily.current = data.baseChannelDaily ?? data.channelDaily;
+
+  // Расходы: в живом режиме пишем в API и перезагружаем данные, в демо меняем локально.
+  const addSpend = useCallback(
+    async (e: Omit<SpendEntry, "id">) => {
+      if (spendUrl) {
+        try {
+          await spendRequest(spendUrl, apiToken, { method: "POST", body: JSON.stringify(e) });
+        } catch (err) {
+          if (err instanceof ApiAuthError) onAuthError?.();
+          throw err;
+        }
+        refresh();
+        return;
+      }
+      setLocal((d) => {
+        const entries = [{ ...e, id: `local-${Date.now()}` }, ...(d.spendEntries ?? [])];
+        return { ...d, spendEntries: entries, channelDaily: applySpendEntries(baseDaily.current ?? d.channelDaily, entries) };
+      });
+    },
+    [spendUrl, apiToken, onAuthError, refresh, setLocal],
+  );
+  const deleteSpend = useCallback(
+    async (id: string) => {
+      if (spendUrl) {
+        await spendRequest(`${spendUrl}?id=${encodeURIComponent(id)}`, apiToken, { method: "DELETE" }).catch((err) => {
+          if (err instanceof ApiAuthError) onAuthError?.();
+        });
+        refresh();
+        return;
+      }
+      setLocal((d) => {
+        const entries = (d.spendEntries ?? []).filter((x) => x.id !== id);
+        return { ...d, spendEntries: entries, channelDaily: applySpendEntries(baseDaily.current ?? d.channelDaily, entries) };
+      });
+    },
+    [spendUrl, apiToken, onAuthError, refresh, setLocal],
+  );
 
   useEffect(() => {
     const t = window.setInterval(() => setNowMs(Date.now()), 30_000);
@@ -1879,6 +2238,18 @@ export default function MarketingFunnelDashboard({
             </div>
 
             <FunnelSection steps={view.funnel} hasPrev={view.prev !== null} />
+
+            <SpendCard
+              rows={view.channels}
+              defs={data?.channels ?? []}
+              entries={(data?.spendEntries ?? []).filter(
+                (e) => e.dateTo >= toLocalIso(new Date(view.range.from)).slice(0, 10) && e.dateFrom <= toLocalIso(new Date(view.range.to)).slice(0, 10),
+              )}
+              currency={currency}
+              revenueSource={data?.meta.revenueSource}
+              onAdd={addSpend}
+              onDelete={deleteSpend}
+            />
 
             <LossesCard
               report={view.losses}

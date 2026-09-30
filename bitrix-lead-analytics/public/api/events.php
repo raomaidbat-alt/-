@@ -16,6 +16,7 @@ require dirname(__DIR__, 2) . '/src/bootstrap.php';
 use App\Analytics\Analytics;
 use App\Analytics\ChannelMap;
 use App\Analytics\EventFeed;
+use App\Analytics\SpendRepository;
 use App\Db;
 use App\Http\Api;
 use App\Logger;
@@ -42,7 +43,7 @@ $utc = new DateTimeZone('UTC');
 try {
     $db = Db::fromConfig($cfg['db']);
     $channels = ChannelMap::fromConfig($cfg['channels'] ?? [], $db);
-    $feed = (new EventFeed($db, $channels, $cfg['funnel'] ?? []))->build(
+    $feed = (new EventFeed($db, $channels, $cfg['funnel'] ?? [], (bool) ($cfg['sync']['deals'] ?? true), new SpendRepository($db)))->build(
         $from->setTimezone($utc)->format('Y-m-d H:i:s'),
         $now->setTimezone($utc)->format('Y-m-d H:i:s'),
         $tz
@@ -57,6 +58,8 @@ try {
             'lastSyncAt' => $sync['last_success']['finished_at'] ?? null,
             'lastSyncStatus' => $sync['last_run']['status'] ?? null,
             'currency' => $feed['currency'],
+            // Откуда выручка: "deals" (выигранные сделки из лидов) или "leads" (сумма лида в успешной стадии).
+            'revenueSource' => $feed['revenueSource'],
             'timezone' => $tz->getName(),
             // Как часто идёт синхронизация: дашборд по нему решает, "Live" данные или устарели.
             'syncIntervalMinutes' => max(1, (int) round(((int) (getenv('SYNC_INTERVAL_SECONDS') ?: 900)) / 60)),
@@ -67,6 +70,7 @@ try {
         'rawEvents' => $feed['rawEvents'],
         'channelDaily' => $feed['channelDaily'],
         'statuses' => $feed['statuses'],
+        'spendEntries' => $feed['spendEntries'],
     ]);
 } catch (Throwable $e) {
     (new Logger('api', $cfg['app']['log_dir'] ?? null, 'error', false))

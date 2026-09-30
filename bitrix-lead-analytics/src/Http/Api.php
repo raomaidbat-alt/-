@@ -8,8 +8,11 @@ namespace App\Http;
  */
 final class Api
 {
-    /** Заголовки, CORS и проверка метода/токена. Возвращает конфиг. */
-    public static function boot(): array
+    /**
+     * Заголовки, CORS и проверка метода/токена. Возвращает конфиг.
+     * @param list<string> $methods разрешённые методы (по умолчанию только чтение)
+     */
+    public static function boot(array $methods = ['GET']): array
     {
         header('Content-Type: application/json; charset=utf-8');
         header('Cache-Control: no-store');
@@ -26,8 +29,8 @@ final class Api
         if ($allowedOrigin && ($_SERVER['HTTP_ORIGIN'] ?? '') === $allowedOrigin) {
             header('Access-Control-Allow-Origin: ' . $allowedOrigin);
             header('Vary: Origin');
-            header('Access-Control-Allow-Headers: Authorization, X-Api-Token');
-            header('Access-Control-Allow-Methods: GET, OPTIONS');
+            header('Access-Control-Allow-Headers: Authorization, X-Api-Token, Content-Type');
+            header('Access-Control-Allow-Methods: ' . implode(', ', $methods) . ', OPTIONS');
         }
         // Токен и данные ходят только по HTTPS. Исключение: запросы с этой же машины (разработка).
         $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
@@ -46,7 +49,7 @@ final class Api
             http_response_code(204);
             exit;
         }
-        if ($method !== 'GET') {
+        if (!in_array($method, $methods, true)) {
             self::respond(405, ['error' => 'method_not_allowed']);
         }
 

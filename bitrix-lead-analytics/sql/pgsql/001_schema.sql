@@ -92,6 +92,34 @@ CREATE INDEX IF NOT EXISTS idx_snap_recorded   ON leads_snapshots (recorded_at);
 CREATE INDEX IF NOT EXISTS idx_snap_run        ON leads_snapshots (sync_run_id);
 CREATE INDEX IF NOT EXISTS idx_snap_transition ON leads_snapshots (change_type, prev_status_id, status_id);
 
+-- Сделки, созданные из лидов: по выигранным считается выручка канала. Только суммы и даты.
+CREATE TABLE IF NOT EXISTS deals (
+    deal_id          BIGINT        PRIMARY KEY,
+    lead_id          BIGINT        NOT NULL,
+    stage_id         VARCHAR(50)   NULL,
+    semantics        CHAR(1)       NOT NULL DEFAULT 'P',  -- P в работе, S выиграна, F проиграна
+    opportunity      NUMERIC(18,2) NOT NULL DEFAULT 0,
+    currency_id      VARCHAR(8)    NULL,
+    date_create      TIMESTAMP(0)  NULL,
+    won_at           TIMESTAMP(0)  NULL,
+    last_seen_run_id BIGINT        NULL,
+    synced_at        TIMESTAMP(0)  NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_deals_lead ON deals (lead_id);
+CREATE INDEX IF NOT EXISTS idx_deals_created ON deals (date_create);
+
+-- Расходы на каналы, которые вносятся в дашборде. Сумма равномерно делится на дни date_from..date_to.
+CREATE TABLE IF NOT EXISTS channel_spend (
+    id           BIGSERIAL     PRIMARY KEY,
+    channel_key  VARCHAR(64)   NOT NULL,
+    date_from    DATE          NOT NULL,
+    date_to      DATE          NOT NULL,
+    amount       NUMERIC(14,2) NOT NULL,
+    comment      VARCHAR(255)  NULL,
+    created_at   TIMESTAMP(0)  NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_spend_channel_dates ON channel_spend (channel_key, date_from, date_to);
+
 -- Журнал снапшотов только дописывается: UPDATE и DELETE запрещены на уровне БД.
 CREATE OR REPLACE FUNCTION leads_snapshots_append_only() RETURNS trigger AS $$
 BEGIN

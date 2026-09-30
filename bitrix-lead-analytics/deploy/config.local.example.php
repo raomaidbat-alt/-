@@ -8,7 +8,8 @@ return [
     /*
      * Каналы = группы источников лидов. source_names: названия источников точно как в Bitrix24
      * (регистр не важен), можно несколько на один канал. sources: то же по ID, если удобнее.
-     * spend_per_month / reach_per_month: расходы и охват в месяц для ROMI и шага "Охват" (0 = не считать).
+     * spend_per_month: постоянный расход в месяц (для ROMI). Если для канала внести расходы в дашборде
+ *   (кнопка «Добавить расход»), они заменят это значение. reach_per_month: охват в месяц (0 = не считать).
      * icon: send, mail, bot, users, briefcase, megaphone, handshake, clapperboard, target, layers.
      */
     'channels' => [
@@ -30,14 +31,14 @@ return [
             'label' => 'Рассылка Coldy',
             'source_names' => ['Рассылка Coldy'],
             'icon' => 'megaphone',
-            'spend_per_month' => 0,
+            'spend_per_month' => 10000,  // Coldy
             'reach_per_month' => 0,
         ],
         'lead_harvester' => [
             'label' => 'Lead Harvester',
             'source_names' => ['Lead Harvester'],
             'icon' => 'target',
-            'spend_per_month' => 0,
+            'spend_per_month' => 11500,  // подписка Профи.ру
             'reach_per_month' => 0,
         ],
         'tg_bot' => [
@@ -45,7 +46,7 @@ return [
             'source_names' => ['Заявки из чатов (ТГ Бот)'],
             'sources' => ['64'],
             'icon' => 'bot',
-            'spend_per_month' => 0,
+            'spend_per_month' => 1500,  // ТГ-бот
             'reach_per_month' => 0,
         ],
     ],

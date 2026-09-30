@@ -97,6 +97,36 @@ CREATE TABLE IF NOT EXISTS leads_snapshots (
     KEY idx_snap_transition  (change_type, prev_status_id, status_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Сделки, созданные из лидов: по выигранным считается выручка канала. Только суммы и даты.
+CREATE TABLE IF NOT EXISTS deals (
+    deal_id          BIGINT UNSIGNED NOT NULL,
+    lead_id          BIGINT UNSIGNED NOT NULL,
+    stage_id         VARCHAR(50)   NULL,
+    semantics        CHAR(1)       NOT NULL DEFAULT 'P',  -- P в работе, S выиграна, F проиграна
+    opportunity      DECIMAL(18,2) NOT NULL DEFAULT 0,
+    currency_id      VARCHAR(8)    NULL,
+    date_create      DATETIME      NULL,
+    won_at           DATETIME      NULL,
+    last_seen_run_id BIGINT UNSIGNED NULL,
+    synced_at        DATETIME      NOT NULL,
+    PRIMARY KEY (deal_id),
+    KEY idx_deals_lead (lead_id),
+    KEY idx_deals_created (date_create)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Расходы на каналы, которые вносятся в дашборде. Сумма равномерно делится на дни date_from..date_to.
+CREATE TABLE IF NOT EXISTS channel_spend (
+    id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    channel_key  VARCHAR(64)   NOT NULL,
+    date_from    DATE          NOT NULL,
+    date_to      DATE          NOT NULL,
+    amount       DECIMAL(14,2) NOT NULL,
+    comment      VARCHAR(255)  NULL,
+    created_at   DATETIME      NOT NULL,
+    PRIMARY KEY (id),
+    KEY idx_spend_channel_dates (channel_key, date_from, date_to)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Журнал снапшотов только дописывается: UPDATE и DELETE запрещены на уровне БД.
 DROP TRIGGER IF EXISTS trg_leads_snapshots_no_update;
 CREATE TRIGGER trg_leads_snapshots_no_update BEFORE UPDATE ON leads_snapshots

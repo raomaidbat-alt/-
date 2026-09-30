@@ -103,6 +103,14 @@ final class SyncService
                 $params['filter']['>=DATE_CREATE'] = gmdate('Y-m-d\TH:i:s+00:00', strtotime($createdFrom . ' UTC'));
             }
 
+            // Сделки из лидов (для выручки) забираем до записи, сбой здесь не мешает лидам.
+            $dealSync = null;
+            $deals = null;
+            if ($this->cfg['sync']['deals'] ?? true) {
+                $dealSync = new DealSync($this->db, $this->b24, $this->log);
+                $deals = $dealSync->fetch($watermark, $createdFrom);
+            }
+
             $seen = [];
             foreach ($this->b24->listAll('crm.lead.list', $params) as $page) {
                 $stats['fetched'] += count($page);
@@ -129,6 +137,13 @@ final class SyncService
 
             if ($mode === 'full' && !$dryRun) {
                 $stats['deleted'] = $repo->markMissingAsDeleted($runId, $now, $createdFrom);
+            }
+            if ($dealSync !== null && $deals !== null && !$dryRun) {
+                $stats['deals'] = count($deals);
+                $dealSync->save($deals, $runId, $now);
+                if ($mode === 'full') {
+                    $dealSync->deleteMissing($runId, $createdFrom);
+                }
             }
             $this->db->pdo->commit();
 
