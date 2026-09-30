@@ -108,7 +108,9 @@ final class SyncService
             $deals = null;
             if ($this->cfg['sync']['deals'] ?? true) {
                 $dealSync = new DealSync($this->db, $this->b24, $this->log);
-                $deals = $dealSync->fetch($watermark, $createdFrom);
+                // При окне истории сделки забираем целиком за это окно, а не только изменённые:
+                // так после включения выручки подтянутся и сделки, выигранные раньше. Их немного.
+                $deals = $dealSync->fetch($createdFrom !== null ? null : $watermark, $createdFrom);
             }
 
             $seen = [];
@@ -141,7 +143,7 @@ final class SyncService
             if ($dealSync !== null && $deals !== null && !$dryRun) {
                 $stats['deals'] = count($deals);
                 $dealSync->save($deals, $runId, $now);
-                if ($mode === 'full') {
+                if ($mode === 'full' || $createdFrom !== null) {
                     $dealSync->deleteMissing($runId, $createdFrom);
                 }
             }
