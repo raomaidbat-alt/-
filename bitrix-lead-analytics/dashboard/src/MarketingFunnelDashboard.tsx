@@ -142,6 +142,8 @@ export interface DashboardData {
     syncIntervalMinutes?: number;
     /** Откуда выручка: выигранные сделки из лидов или сумма лида в успешной стадии */
     revenueSource?: "deals" | "leads";
+    /** Стадия CRM, с которой лид считается квалифицированным (прошёл первый звонок) */
+    qualifiedStage?: { id: string; name: string } | null;
   };
   channels: ChannelDef[];
   rawEvents: LeadEvent[];
@@ -315,6 +317,7 @@ export function generateMockDashboardData(now: Date = new Date(), seed = 2026092
       lastSyncStatus: "success",
       currency: "RUB",
       portalUrl: null,
+      qualifiedStage: { id: "IN_PROCESS", name: "Аудит" },
     },
     channels: channels.map(({ id: cid, label, icon }) => ({ id: cid, label, icon })),
     rawEvents: events,
@@ -323,7 +326,7 @@ export function generateMockDashboardData(now: Date = new Date(), seed = 2026092
     spendEntries: spendEntries.filter((e) => e.dateTo >= toLocalIso(new Date(now.getFullYear(), now.getMonth() - 2, 1)).slice(0, 10)),
     statuses: [
       { id: "NEW", name: "Новая заявка", color: "#39A8EF", semantics: "P", sort: 10 },
-      { id: "IN_PROCESS", name: "Квалификация", color: "#2FC6F6", semantics: "P", sort: 20 },
+      { id: "IN_PROCESS", name: "Аудит", color: "#2FC6F6", semantics: "P", sort: 20 },
       { id: "UC_CONSULT", name: "Разбор назначен", color: "#55D0E0", semantics: "P", sort: 30 },
       { id: "UC_OFFER", name: "КП отправлено", color: "#FFA900", semantics: "P", sort: 40 },
       { id: "CONVERTED", name: "Оплата", color: "#7BD500", semantics: "S", sort: 50 },
@@ -507,7 +510,7 @@ export function computeFunnel(events: LeadEvent[], daily: ChannelDailyStat[], fr
   const raw: Omit<FunnelStep, "stepCr" | "totalCr" | "dropped">[] = [
     { id: "reach", name: "Просмотры / Охват", value: reach > 0 ? reach : null, medianDays: null },
     { id: "lead", name: "Вход в воронку (Лид)", value: cohort.length, medianDays: null },
-    { id: "sql", name: "Квалификация (SQL)", value: cohort.filter((e) => reached(e, "sql")).length, medianDays: daysTo((e) => e.sqlAt) },
+    { id: "sql", name: "Квал. лид", value: cohort.filter((e) => reached(e, "sql")).length, medianDays: daysTo((e) => e.sqlAt) },
     { id: "consult", name: "Консультация / Демо / КП", value: cohort.filter((e) => reached(e, "consult")).length, medianDays: daysTo((e) => e.consultAt) },
     { id: "paid", name: "Продажа (Оплата)", value: cohort.filter((e) => e.stage === "paid").length, medianDays: daysTo((e) => e.paidAt) },
   ];
@@ -1483,8 +1486,8 @@ function SpendCard({
   const mfmt = new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric" });
 
   const total = shown.reduce(
-    (a, r) => ({ spend: a.spend + r.spend, leads: a.leads + r.leads, paid: a.paid + r.payments, revenue: a.revenue + r.revenue }),
-    { spend: 0, leads: 0, paid: 0, revenue: 0 },
+    (a, r) => ({ spend: a.spend + r.spend, leads: a.leads + r.leads, sql: a.sql + r.sql, paid: a.paid + r.payments, revenue: a.revenue + r.revenue }),
+    { spend: 0, leads: 0, sql: 0, paid: 0, revenue: 0 },
   );
 
   const submit = async (ev: FormEvent) => {
@@ -1593,13 +1596,15 @@ function SpendCard({
         )}
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[820px] text-sm">
+          <table className="w-full min-w-[980px] text-sm">
             <thead className="text-xs text-zinc-500 dark:text-zinc-400">
               <tr className="border-b border-zinc-200 dark:border-zinc-800">
                 <th className="px-2.5 py-2 text-left font-medium">Канал</th>
                 <th className="px-2.5 py-2 text-right font-medium">Расход</th>
                 <th className="px-2.5 py-2 text-right font-medium">Лиды</th>
                 <th className="px-2.5 py-2 text-right font-medium">Цена лида</th>
+                <th className="px-2.5 py-2 text-right font-medium" title="Прошли первый звонок и дошли до квалификации">Квал. лиды</th>
+                <th className="px-2.5 py-2 text-right font-medium">Цена квал. лида</th>
                 <th className="px-2.5 py-2 text-right font-medium" title="Оплаты с датой в выбранном периоде">Продажи</th>
                 <th className="px-2.5 py-2 text-right font-medium">Цена продажи</th>
                 <th className="px-2.5 py-2 text-right font-medium">Выручка</th>
@@ -1626,6 +1631,8 @@ function SpendCard({
                     <td className="px-2.5 py-3 text-right tabular-nums text-zinc-900 dark:text-zinc-100">{r.spend ? fmtMoney(r.spend, currency) : "—"}</td>
                     <td className="px-2.5 py-3 text-right tabular-nums text-zinc-700 dark:text-zinc-200">{fmtInt(r.leads)}</td>
                     <td className="px-2.5 py-3 text-right tabular-nums text-zinc-700 dark:text-zinc-200">{r.spend && r.leads ? fmtMoney(r.spend / r.leads, currency) : "—"}</td>
+                    <td className="px-2.5 py-3 text-right tabular-nums text-zinc-700 dark:text-zinc-200">{fmtInt(r.sql)}</td>
+                    <td className="px-2.5 py-3 text-right tabular-nums text-zinc-700 dark:text-zinc-200">{r.spend && r.sql ? fmtMoney(r.spend / r.sql, currency) : "—"}</td>
                     <td className="px-2.5 py-3 text-right tabular-nums text-zinc-700 dark:text-zinc-200">{fmtInt(r.payments)}</td>
                     <td className="px-2.5 py-3 text-right tabular-nums text-zinc-700 dark:text-zinc-200">{r.spend && r.payments ? fmtMoney(r.spend / r.payments, currency) : "—"}</td>
                     <td className="px-2.5 py-3 text-right font-medium tabular-nums text-zinc-900 dark:text-white">{fmtMoney(r.revenue, currency)}</td>
@@ -1645,6 +1652,8 @@ function SpendCard({
                 <td className="px-2.5 py-2.5 text-right tabular-nums">{fmtMoney(total.spend, currency)}</td>
                 <td className="px-2.5 py-2.5 text-right tabular-nums">{fmtInt(total.leads)}</td>
                 <td className="px-2.5 py-2.5 text-right tabular-nums">{total.spend && total.leads ? fmtMoney(total.spend / total.leads, currency) : "—"}</td>
+                <td className="px-2.5 py-2.5 text-right tabular-nums">{fmtInt(total.sql)}</td>
+                <td className="px-2.5 py-2.5 text-right tabular-nums">{total.spend && total.sql ? fmtMoney(total.spend / total.sql, currency) : "—"}</td>
                 <td className="px-2.5 py-2.5 text-right tabular-nums">{fmtInt(total.paid)}</td>
                 <td className="px-2.5 py-2.5 text-right tabular-nums">{total.spend && total.paid ? fmtMoney(total.spend / total.paid, currency) : "—"}</td>
                 <td className="px-2.5 py-2.5 text-right tabular-nums">{fmtMoney(total.revenue, currency)}</td>
@@ -2217,10 +2226,10 @@ export default function MarketingFunnelDashboard({
               <KpiCard
                 icon={UserCheck}
                 accent={COLORS.blue}
-                label="Квалифицированные (SQL)"
+                label="Квал. лиды"
                 value={fmtInt(view.kpi.sql)}
                 delta={<DeltaBadge delta={view.deltas.sql} />}
-                hint={<span>C2 {fmtPct(view.kpi.c2)} из лида</span>}
+                hint={<span>C2 {fmtPct(view.kpi.c2)} из лида{data?.meta.qualifiedStage ? ` · дошли до «${data.meta.qualifiedStage.name}»` : ""}</span>}
               />
               <KpiCard
                 icon={Banknote}

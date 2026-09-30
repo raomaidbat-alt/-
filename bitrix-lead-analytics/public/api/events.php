@@ -60,6 +60,8 @@ try {
             'currency' => $feed['currency'],
             // Откуда выручка: "deals" (выигранные сделки из лидов) или "leads" (сумма лида в успешной стадии).
             'revenueSource' => $feed['revenueSource'],
+            // Стадия, с которой лид считается квалифицированным (null: любая после первой).
+            'qualifiedStage' => $feed['qualifiedStage'],
             'timezone' => $tz->getName(),
             // Как часто идёт синхронизация: дашборд по нему решает, "Live" данные или устарели.
             'syncIntervalMinutes' => max(1, (int) round(((int) (getenv('SYNC_INTERVAL_SECONDS') ?: 900)) / 60)),

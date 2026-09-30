@@ -38,14 +38,20 @@ final class EventFeed
             array_filter($statuses, static fn ($s) => $s['semantics'] === 'P')
         );
         $initialSort = $processSorts ? min($processSorts) : 0;
-        $consultSort = null;
-        // Стадию консультации можно указать кодом (UC_XXXX) или названием, как в Bitrix24.
-        $consultCfg = mb_strtolower(trim((string) ($this->funnelCfg['consultation_status'] ?? '')));
-        foreach ($statuses as $s) {
-            if ($consultCfg !== '' && ($consultCfg === mb_strtolower($s['status_id']) || $consultCfg === mb_strtolower(trim($s['name'])))) {
-                $consultSort = (int) $s['sort'];
+        // Стадии консультации и квал. лида можно указать кодом (UC_XXXX) или названием, как в Bitrix24.
+        $consultSort = self::findStage($statuses, (string) ($this->funnelCfg['consultation_status'] ?? ''))['sort'] ?? null;
+        // Квал. лид: прошёл первый звонок и дошёл до стадии qualified_status. Если она не задана,
+        // ищем рабочую стадию со словом "аудит"; не нашли: любая стадия после первой.
+        $qualStage = self::findStage($statuses, (string) ($this->funnelCfg['qualified_status'] ?? ''));
+        if ($qualStage === null && ($this->funnelCfg['qualified_status'] ?? '') === '') {
+            foreach ($statuses as $s) {
+                if ($s['semantics'] === 'P' && mb_stripos((string) $s['name'], 'аудит') !== false) {
+                    $qualStage = $s;
+                    break;
+                }
             }
         }
+        $qualSort = $qualStage !== null ? (int) $qualStage['sort'] : null;
 
         $leads = $this->db->all(
             "SELECT l.bitrix_id, l.date_create, l.source_id, l.utm_source, l.status_id, l.status_semantics,
@@ -61,7 +67,7 @@ final class EventFeed
         $milestones = [];
         $rows = $this->db->all(
             "SELECT s.lead_id,
-                    MIN(CASE WHEN s.status_semantics <> 'F' AND d.sort > ? THEN s.stage_entered_at END) AS sql_at,
+                    MIN(CASE WHEN s.status_semantics <> 'F' AND d.sort >= ? THEN s.stage_entered_at END) AS sql_at,
                     MIN(CASE WHEN s.status_semantics <> 'F' AND d.sort >= ? THEN s.stage_entered_at END) AS consult_at,
                     MIN(CASE WHEN s.status_semantics = 'S' THEN s.stage_entered_at END) AS paid_at,
                     MIN(CASE WHEN s.status_semantics = 'F' THEN s.stage_entered_at END) AS lost_at
@@ -70,7 +76,7 @@ final class EventFeed
                JOIN leads_current l ON l.bitrix_id = s.lead_id
               WHERE l.is_deleted = 0 AND l.date_create BETWEEN ? AND ?
               GROUP BY s.lead_id",
-            [$initialSort, $consultSort ?? 2147483647, $fromUtc, $toUtc] // стадии нет: INT_MAX, чтобы PostgreSQL не вышел за integer
+            [$qualSort ?? $initialSort + 1, $consultSort ?? 2147483647, $fromUtc, $toUtc] // стадии нет: INT_MAX, чтобы PostgreSQL не вышел за integer
         );
         foreach ($rows as $r) {
             $milestones[(int) $r['lead_id']] = $r;
@@ -141,7 +147,7 @@ final class EventFeed
             $stage = match (true) {
                 $sem === 'S' => 'paid',
                 $consultSort !== null && $maxSort >= $consultSort => 'consult',
-                (int) $l['is_qualified'] === 1 => 'sql',
+                $qualSort !== null ? $maxSort >= $qualSort : (int) $l['is_qualified'] === 1 => 'sql',
                 default => 'lead',
             };
             $lost = $sem === 'F';
@@ -224,6 +230,7 @@ final class EventFeed
         return [
             'currency' => $currency,
             'revenueSource' => $revenueSource,
+            'qualifiedStage' => $qualStage !== null ? ['id' => $qualStage['status_id'], 'name' => $qualStage['name']] : null,
             'spendEntries' => $this->spend?->list($from->format('Y-m-d'), $to->format('Y-m-d')) ?? [],
             'channels' => array_map(
                 static fn ($c) => ['id' => $c['id'], 'label' => $c['name']] + array_intersect_key($c, ['icon' => 1, 'color' => 1]),
@@ -239,5 +246,20 @@ final class EventFeed
                 'sort' => (int) $s['sort'],
             ], $statuses),
         ];
+    }
+
+    /** Стадия по коду или названию (регистр не важен). */
+    private static function findStage(array $statuses, string $key): ?array
+    {
+        $key = mb_strtolower(trim($key));
+        if ($key === '') {
+            return null;
+        }
+        foreach ($statuses as $s) {
+            if ($key === mb_strtolower($s['status_id']) || $key === mb_strtolower(trim((string) $s['name']))) {
+                return $s;
+            }
+        }
+        return null;
     }
 }
