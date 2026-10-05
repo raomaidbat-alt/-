@@ -35,6 +35,15 @@ return [
             'spend_per_month' => 11500,  // подписка Профи.ру
             'reach_per_month' => 0,
         ],
+        'skorozvon' => [
+            // Названия источника как в Bitrix24 (список: SELECT name FROM sources_directory), регистр не важен.
+            'label' => 'Скорозвон',
+            'source_names' => ['Скорозвон', 'Скоро звон', 'Skorozvon'],
+            'utm_sources' => ['skorozvon'],
+            'icon' => 'users',
+            'spend_per_month' => 0,  // впишите бюджет Скорозвона в месяц
+            'reach_per_month' => 0,
+        ],
         'tg_bot' => [
             'label' => 'Заявки из чатов (ТГ Бот)',
             'source_names' => ['Заявки из чатов (ТГ Бот)'],
