@@ -1636,7 +1636,7 @@ function SpendCard({
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<SpendMode>("month");
   const today = toLocalIso(new Date()).slice(0, 10);
-  const [form, setForm] = useState({ channel: editable[0]?.id ?? "", month: today.slice(0, 7), day: today, from: today, to: today, amount: "", comment: "" });
+  const [form, setForm] = useState({ channel: "", month: today.slice(0, 7), day: today, from: today, to: today, amount: "", comment: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -1717,6 +1717,7 @@ function SpendCard({
             <label className="lg:col-span-2">
               <span className="mb-1 block text-xs text-zinc-500 dark:text-zinc-400">Канал</span>
               <select id="spend-channel" value={form.channel} onChange={(e) => setForm({ ...form, channel: e.target.value })} className={inputCls}>
+                <option value="" disabled>Выберите канал</option>
                 {editable.map((d) => (
                   <option key={d.id} value={d.id}>{d.label}</option>
                 ))}
