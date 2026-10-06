@@ -30,14 +30,19 @@ $days = match ($period) {
     '7d' => 7,
     '30d' => 30,
     'quarter', '90d' => 90,
+    'month', 'prevmonth' => 'month',
     'all' => null,
     default => Api::respond(400, ['error' => 'bad_period']),
 };
 
 // Текущий период считается с начала дня (days − 1) дней назад, плюс такой же период перед ним.
-$from = $days === null
-    ? new DateTimeImmutable('2000-01-01 00:00:00', $tz)
-    : $now->setTime(0, 0)->modify('-' . (2 * $days - 1) . ' days');
+// Календарные месяцы: берём с начала месяца, который на два месяца раньше текущего
+// (текущий + прошлый для дельт + запас).
+$from = match (true) {
+    $days === 'month' => $now->modify('first day of -2 months')->setTime(0, 0),
+    $days === null => new DateTimeImmutable('2000-01-01 00:00:00', $tz),
+    default => $now->setTime(0, 0)->modify('-' . (2 * $days - 1) . ' days'),
+};
 
 $utc = new DateTimeZone('UTC');
 try {

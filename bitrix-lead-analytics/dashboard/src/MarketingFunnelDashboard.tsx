@@ -65,7 +65,7 @@ import {
 
 export type ChannelId = string;
 export type FunnelStage = "lead" | "sql" | "consult" | "paid";
-export type PeriodKey = "7d" | "30d" | "quarter" | "all";
+export type PeriodKey = "7d" | "30d" | "month" | "prevmonth" | "quarter" | "all";
 export type CurrencyCode = "RUB" | "USD" | "EUR" | string;
 
 /** Один лид = одно событие. Моменты шагов берутся из истории стадий (снапшотов CRM). */
@@ -437,6 +437,15 @@ export function resolvePeriod(period: PeriodKey, nowIso: string, events: LeadEve
     const first = events.length ? Math.min(...events.map((e) => ts(e.createdAt))) : to - 30 * DAY_MS;
     const days = Math.max(1, Math.ceil((to - first) / DAY_MS));
     return { from: first, to, prevFrom: null, prevTo: null, days, bucket: days > 45 ? "week" : "day" };
+  }
+  if (period === "month" || period === "prevmonth") {
+    // Календарный месяц: расход по месячным бюджетам считается за целый месяц, а не за "последние 30 дней".
+    const shift = period === "month" ? 0 : 1;
+    const from = new Date(now.getFullYear(), now.getMonth() - shift, 1).getTime();
+    const end = period === "month" ? to : new Date(now.getFullYear(), now.getMonth(), 1).getTime() - 1;
+    const prevFrom = new Date(now.getFullYear(), now.getMonth() - shift - 1, 1).getTime();
+    const days = Math.max(1, Math.ceil((end - from) / DAY_MS));
+    return { from, to: end, prevFrom, prevTo: prevFrom + (end - from), days, bucket: "day" };
   }
   const days = period === "7d" ? 7 : period === "30d" ? 30 : 90;
   const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days + 1).getTime();
@@ -944,6 +953,8 @@ const STUCK_DAYS = 7;
 const PERIODS: { key: PeriodKey; label: string }[] = [
   { key: "7d", label: "7 дней" },
   { key: "30d", label: "30 дней" },
+  { key: "month", label: "Этот месяц" },
+  { key: "prevmonth", label: "Прошлый месяц" },
   { key: "quarter", label: "Квартал" },
   { key: "all", label: "Все время" },
 ];
