@@ -10,10 +10,10 @@
 		-Server
 	}
 
-	# Наружу отдаём только index.html, assets/ и два эндпоинта API.
+	# Наружу отдаём только index.html, assets/ и три эндпоинта API.
 	@php path *.php
 	handle @php {
-		@denied not path /api/analytics.php /api/events.php
+		@denied not path /api/analytics.php /api/events.php /api/spend.php
 		respond @denied 404
 		php_fastcgi app:9000
 	}

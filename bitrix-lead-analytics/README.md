@@ -14,6 +14,7 @@ statuses_directory, sources_directory
         │
         ▼
 public/api/events.php     сырые события для React-дашборда
+public/api/spend.php      расходы по каналам (добавить, удалить, список)
 public/api/analytics.php  готовые агрегаты (KPI, воронка, скорость стадий, таймлайн)
         │
         ▼
